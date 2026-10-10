@@ -14,6 +14,7 @@ Ctrl+Alt+Del is handled by Windows itself and cannot be blocked - that is the
 deliberate hard exit. The lock always ends on its own when the timer runs out.
 
     pythonw urge_button.py                       run it
+    python urge_button.py --install              desktop shortcut + start with Windows
     python urge_button.py --preview DIR STAGE    screenshot a screen without locking
 """
 
@@ -552,6 +553,11 @@ def run_preview(out_dir, stage):
 
 def main():
     winapi.set_dpi_aware()
+    if len(sys.argv) >= 2 and sys.argv[1] == "--install":
+        desk = winapi.desktop_link()
+        print("Desktop shortcut:", "ok" if winapi.make_shortcut(desk) else "FAILED", desk)
+        print("Start with Windows:", "ok" if winapi.set_start_with_windows(True) else "FAILED", winapi.STARTUP_LINK)
+        return
     if len(sys.argv) >= 3 and sys.argv[1] == "--preview":
         run_preview(sys.argv[2], sys.argv[3] if len(sys.argv) > 3 else "options")
         return

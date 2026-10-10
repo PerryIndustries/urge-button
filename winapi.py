@@ -171,17 +171,28 @@ def starts_with_windows():
     return STARTUP_LINK.exists()
 
 
+def desktop_link():
+    out = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command",
+                          "[Environment]::GetFolderPath('Desktop')"],
+                         capture_output=True, text=True, creationflags=0x08000000, check=False)
+    return Path(out.stdout.strip() or Path.home() / "Desktop") / "Urge Button.lnk"
+
+
 def set_start_with_windows(enabled):
     if not enabled:
         STARTUP_LINK.unlink(missing_ok=True)
         return True
+    return make_shortcut(STARTUP_LINK)
+
+
+def make_shortcut(link):
     ps = (
         "$s = (New-Object -ComObject WScript.Shell).CreateShortcut($env:URGE_LINK);"
         "$s.TargetPath = $env:URGE_EXE; $s.Arguments = '\"' + $env:URGE_SCRIPT + '\"';"
         "$s.WorkingDirectory = $env:URGE_DIR; $s.Save()"
     )
-    env = dict(os.environ, URGE_LINK=str(STARTUP_LINK), URGE_EXE=str(pythonw()),
+    env = dict(os.environ, URGE_LINK=str(link), URGE_EXE=str(pythonw()),
                URGE_SCRIPT=str(SCRIPT), URGE_DIR=str(SCRIPT.parent))
     subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
                    env=env, creationflags=0x08000000, check=False)  # CREATE_NO_WINDOW
-    return STARTUP_LINK.exists()
+    return Path(link).exists()
