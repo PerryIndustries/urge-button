@@ -38,9 +38,10 @@ import winapi
 from progress import ProgressWindow, fake_log
 from sudoku import check as check_sudoku
 from sudoku import make_puzzle
-from theme import ACCENT, BAD, BG, FONT, GOOD, MUTED, PANEL, PANEL_HI, TEXT, button, px
+from theme import ACCENT, BAD, BG, FONT, GOOD, MUTED, PANEL, PANEL_HI, TEXT, WARN, button, px
 from urge_log import (
-    CONFIG_PATH, MAX_LOCK_MINUTES, OPTIONS, TRIGGERS, EventLog, clamp_minutes, format_gap, heads_up_due,
+    CONFIG_PATH, MAX_LOCK_MINUTES, OPTIONS, TRIGGERS, EventLog, clamp_minutes, cluster_minutes, format_gap,
+    heads_up_due,
     hour_name, load_config, save_json, to_spotify_uri,
 )
 
@@ -184,7 +185,7 @@ class SudokuBoard(tk.Frame):
 
 
 class LockScreen:
-    def __init__(self, app, minutes, event, preview=False):
+    def __init__(self, app, minutes, event, preview=False, note=None):
         self.app = app
         self.event = event
         self.preview = preview
@@ -218,6 +219,8 @@ class LockScreen:
         tk.Label(self.body, text="Breathe. This passes.", font=(FONT, 30, "bold"), fg=TEXT, bg=BG).pack()
         tk.Label(self.body, text=f"Urge #{app.log.today()} today  ·  {app.log.this_week()} this week",
                  font=(FONT, 13), fg=MUTED, bg=BG).pack(pady=(6, 0))
+        if note:
+            tk.Label(self.body, text=note, font=(FONT, 12), fg=WARN, bg=BG, wraplength=px(760)).pack(pady=(6, 0))
         self.why = self.build_why()
         self.clock = tk.Label(self.body, text="", font=(FONT, 64, "bold"), fg=ACCENT, bg=BG)
         self.clock.pack(pady=(10, 18))
@@ -577,6 +580,10 @@ class SettingsWindow:
         self.minutes.delete(0, "end")
         self.minutes.insert(0, str(app.config["lock_minutes"]))
         self.minutes.pack(anchor="w")
+        self.escalate = tk.BooleanVar(value=app.config.get("escalate", True))
+        tk.Checkbutton(right, text="Longer locks when urges come close together (5, then 10 min)",
+                       variable=self.escalate, font=(FONT, 10), fg=TEXT, bg=BG, selectcolor=PANEL,
+                       activebackground=BG, activeforeground=TEXT).pack(anchor="w", pady=(4, 0))
 
         label(right, "Your reasons, one per line. They show on the lock screen.")
         self.reasons = tk.Text(right, width=46, height=4, font=(FONT, 11), padx=6, pady=4, wrap="word", **FIELD)
@@ -760,6 +767,7 @@ class SettingsWindow:
         cfg["reasons"] = [r.strip() for r in self.reasons.get("1.0", "end").splitlines() if r.strip()]
         cfg["reason_image"] = self.image.get().strip()
         cfg["heads_up"] = bool(self.heads_up.get())
+        cfg["escalate"] = bool(self.escalate.get())
         cfg["plan"] = self.plan.get().strip()
         cfg["block_apps"] = [x.strip() for x in self.block.get("1.0", "end").splitlines() if x.strip()]
         try:
@@ -998,14 +1006,21 @@ class App:
     def trigger(self, preview=False):
         if self.lock is not None:
             return
-        minutes = self.config["lock_minutes"]
+        minutes = base = self.config["lock_minutes"]
+        recent = self.log.recent_locks()
+        if self.config.get("escalate", True):
+            minutes = cluster_minutes(base, recent)
         event = self.log.record_press(minutes)
         if self.config.get("block_apps") and not preview:
             cooldown = max(0, int(self.config.get("block_minutes") or 0))
             self.app_blocker.start(self.config["block_apps"], (minutes + cooldown) * 60)
             threading.Thread(target=self.app_blocker.tick, daemon=True).start()
         self.refresh_counts()
-        self.lock = LockScreen(self, minutes, event, preview=preview)
+        note = None
+        if minutes > base:
+            nth = {1: "Second", 2: "Third"}.get(recent, "Another")
+            note = f"{nth} urge in half an hour, so this lock is {minutes} minutes. Clusters are the hard part; you're riding it out."
+        self.lock = LockScreen(self, minutes, event, preview=preview, note=note)
 
     def on_unlock(self):
         self.lock = None
@@ -1036,6 +1051,13 @@ def run_preview(out_dir, stage):
         target = SettingsWindow(app).win
     elif stage == "button":
         target = app.root
+    elif stage == "cluster":
+        app.lock = None
+        app.trigger(preview=True)
+        app.lock.win.destroy()
+        app.lock = None
+        app.trigger(preview=True)
+        target = app.lock.win
     elif stage == "headsup":
         target = HeadsUp(app, 21).win
     else:

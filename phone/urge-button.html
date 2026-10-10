@@ -217,6 +217,11 @@ nav.bar button[aria-current=true] { color: var(--text); background: var(--panel)
       </label>
       <div class="row"><button class="btn" id="syncNowBtn">Sync now</button><span class="note" id="syncStatus"></span></div>
     </div>
+    <div class="card">
+      <div><h3>Notifications</h3><p class="sub">A heads-up on your lock screen before your hard hours, even when this app is closed. Uses the same private repo as sync.</p></div>
+      <div class="row"><button class="btn primary" id="pushBtn">Turn on notifications</button><span class="note" id="pushNote"></span></div>
+    </div>
+    <label class="row" for="setEscalate" style="gap:10px;font-size:14px"><input type="checkbox" id="setEscalate" style="width:20px;height:20px;accent-color:var(--accent)"> Longer locks when urges come close together (5, then 10 minutes)</label>
     <p class="note">Add this page to your home screen so it opens like an app. In Safari, tap Share and then Add to Home Screen. In Chrome, open the menu and tap Add to Home screen.</p>
     <p class="note">A phone app can't lock the whole phone. If you leave during a lock, the timer keeps running, and the lock is still here when you come back. For a harder lock on iPhone, turn on Guided Access (Settings, then Accessibility).</p>
     <div class="row"><button class="btn primary" id="saveSettings">Save</button><span class="note" id="savedNote"></span></div>
@@ -233,6 +238,7 @@ nav.bar button[aria-current=true] { color: var(--text); background: var(--panel)
   <div class="lock-in">
     <h1 id="lockTitle">Breathe. This passes.</h1>
     <p class="sub" id="lockCount"></p>
+    <p class="sub" id="lockNote" style="color:var(--warn);font-size:13px" hidden></p>
     <div class="why" id="why" hidden></div>
     <div class="clock" id="clock">3:00</div>
     <div class="stage" id="stage"></div>
@@ -388,6 +394,71 @@ nav.bar button[aria-current=true] { color: var(--text); background: var(--panel)
     ls.set("urge.months", S.months);
     render();
   }
+  const VAPID_PUBLIC = "BAN4S0NhpJDGz4PBmxKWQ67oRKKWKluDlQ5v-4xpeY4-yNjtcaVOkeUMcmM47QvzW8C8fesNBaJcZVutYs55JFU";
+  function ghFile(path) {
+    const repo = (S.settings.syncRepo || DEFAULT_REPO).trim(), token = (S.settings.syncToken || "").trim();
+    const url = "https://api.github.com/repos/" + repo + "/contents/" + path;
+    const headers = { Authorization: "Bearer " + token, Accept: "application/vnd.github+json" };
+    return {
+      async get() {
+        const r = await fetch(url, { headers, cache: "no-store" });
+        if (r.status === 404) return [null, undefined];
+        if (!r.ok) throw new Error(r.status === 401 || r.status === 403 ? "GitHub refused the token" : "GitHub said " + r.status);
+        const b = await r.json();
+        return [JSON.parse(b64decode(b.content) || "null"), b.sha];
+      },
+      async put(obj, sha) {
+        const body = { message: "update " + path, content: b64encode(JSON.stringify(obj, null, 2)) };
+        if (sha) body.sha = sha;
+        const r = await fetch(url, { method: "PUT", headers, body: JSON.stringify(body) });
+        if (!r.ok) throw new Error("GitHub said " + r.status + " when saving");
+      },
+    };
+  }
+  async function updatePushFile(subscription) {
+    const f = ghFile("push.json");
+    const [cur, sha] = await f.get();
+    const next = Object.assign({}, cur || {}, {
+      enabled: !!S.settings.pushOn && S.settings.headsUp !== false,
+      tz: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      plan: (S.settings.plan || "").trim(),
+      updated: new Date().toISOString(),
+    });
+    if (subscription) { next.subscription = subscription; delete next.expired; }
+    await f.put(next, sha);
+  }
+  function keyBytes(b64) {
+    const pad = "=".repeat((4 - b64.length % 4) % 4);
+    return Uint8Array.from(atob((b64 + pad).replace(/-/g, "+").replace(/_/g, "/")), (c) => c.charCodeAt(0));
+  }
+  async function togglePush() {
+    const note = (t, bad) => { $("pushNote").textContent = t; $("pushNote").style.color = bad ? "var(--bad)" : ""; };
+    if (!(S.settings.syncToken || "").trim()) return note("Set up sync first (above). Notifications use the same private repo.", true);
+    if (!("serviceWorker" in navigator) || !("PushManager" in window) || !("Notification" in window))
+      return note("Open the app from its Home Screen icon first. iPhone only allows notifications there.", true);
+    try {
+      const reg = await navigator.serviceWorker.ready;
+      if (S.settings.pushOn) {
+        const sub = await reg.pushManager.getSubscription();
+        if (sub) await sub.unsubscribe();
+        S.settings.pushOn = false; persistSettings(); fillSettings();
+        await updatePushFile();
+        return note("Notifications are off.");
+      }
+      note("Asking...");
+      if (await Notification.requestPermission() !== "granted")
+        return note("Notifications are blocked. Turn them on in iPhone Settings, Notifications, Urge.", true);
+      const sub = (await reg.pushManager.getSubscription()) ||
+        (await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyBytes(VAPID_PUBLIC) }));
+      S.settings.pushOn = true; persistSettings(); fillSettings();
+      await updatePushFile(sub.toJSON());
+      reg.showNotification("Urge Button", { body: "Notifications are on. You'll get a heads-up before your hard hours.", icon: "icon-192.png" });
+      note("On. Heads-ups arrive about 15 to 20 minutes before a hard hour.");
+    } catch (e) {
+      note("Couldn't turn notifications on: " + (e && e.message ? e.message : "unknown problem"), true);
+    }
+  }
+
   async function syncNow() {
     const token = (S.settings.syncToken || "").trim(), repo = (S.settings.syncRepo || DEFAULT_REPO).trim();
     if (!token) { setSyncStatus("Add a GitHub token below to share one history with your PC."); return; }
@@ -714,10 +785,14 @@ nav.bar button[aria-current=true] { color: var(--text); background: var(--panel)
 
   function startLock() {
     if (active && !active.done) return showLock();
-    const minutes = Math.max(1, Math.min(30, Number(S.settings.lockMinutes) || 3));
+    const base = Math.max(1, Math.min(30, Number(S.settings.lockMinutes) || 3));
+    // urges close together get longer locks: your length, then at least 5, then at least 10 minutes
+    const recent = events().filter((e) => e.kind !== "logged" && e.t >= Date.now() - 30 * 60000).length;
+    const minutes = S.settings.escalate === false || !recent ? base : Math.min(30, Math.max(base, recent >= 2 ? 10 : 5));
+    const note = minutes > base ? (["Second", "Third"][recent - 1] || "Another") + " urge in half an hour, so this lock is " + minutes + " minutes. Clusters are the hard part; you're riding it out." : "";
     const ev = { id: uid(), t: Date.now(), kind: "lock", minutes, choices: [], intensity_start: null, intensity: null, triggers: [] };
     addEvent(ev);
-    active = { id: ev.id, endAt: ev.t + minutes * 60000, done: false };
+    active = { id: ev.id, endAt: ev.t + minutes * 60000, done: false, note };
     ls.set("urge.active", active);
     try { document.documentElement.requestFullscreen && document.documentElement.requestFullscreen().catch(() => {}); } catch {}
     showLock();
@@ -725,6 +800,7 @@ nav.bar button[aria-current=true] { color: var(--text); background: var(--panel)
   function showLock() {
     const s = stats();
     $("lockCount").textContent = "Urge #" + s.today + " today, " + s.week + " this week";
+    $("lockNote").textContent = active.note || ""; $("lockNote").hidden = !active.note;
     $("lock").hidden = false;
     document.body.style.overflow = "hidden";
     try { navigator.wakeLock && navigator.wakeLock.request("screen").then((w) => { wake = w; }).catch(() => {}); } catch {}
@@ -933,6 +1009,9 @@ nav.bar button[aria-current=true] { color: var(--text); background: var(--panel)
     $("setReasons").value = (S.settings.reasons || []).join("\n");
     $("setHeadsUp").checked = S.settings.headsUp !== false;
     $("setPlan").value = S.settings.plan || "";
+    $("setEscalate").checked = S.settings.escalate !== false;
+    $("pushBtn").textContent = S.settings.pushOn ? "Turn off notifications" : "Turn on notifications";
+    $("pushBtn").className = S.settings.pushOn ? "btn" : "btn primary";
     $("setSyncRepo").value = S.settings.syncRepo || DEFAULT_REPO;
     $("setSyncToken").value = S.settings.syncToken || "";
     $("photoPreview").src = S.settings.photo || "";
@@ -944,8 +1023,9 @@ nav.bar button[aria-current=true] { color: var(--text); background: var(--panel)
     const sp = $("setSpotify").value.trim();
     S.settings = { lockMinutes: m, spotify: sp, friends: $("setFriends").value.split("\n").map((x) => x.trim()).filter(Boolean),
       reasons: $("setReasons").value.split("\n").map((x) => x.trim()).filter(Boolean), photo: S.settings.photo || "", headsUp: $("setHeadsUp").checked,
-      plan: $("setPlan").value.trim(), syncRepo: $("setSyncRepo").value.trim() || DEFAULT_REPO, syncToken: $("setSyncToken").value.trim() };
+      plan: $("setPlan").value.trim(), escalate: $("setEscalate").checked, pushOn: !!S.settings.pushOn, syncRepo: $("setSyncRepo").value.trim() || DEFAULT_REPO, syncToken: $("setSyncToken").value.trim() };
     scheduleSync(300);
+    if (S.settings.pushOn) updatePushFile().catch(() => {});
     persistSettings(); fillSettings(); render();
     $("savedNote").textContent = sp && !/^https:\/\/open\.spotify\.com\//.test(sp) ? "Saved. That Spotify link doesn't look like an open.spotify.com link." : "Saved.";
   });
@@ -975,6 +1055,7 @@ nav.bar button[aria-current=true] { color: var(--text); background: var(--panel)
   if (active) showLock();
   setInterval(() => { if ($("lock").hidden) render(); }, 30000);
   $("syncNowBtn").addEventListener("click", () => { setSyncStatus("Syncing..."); syncNow(); });
+  $("pushBtn").addEventListener("click", togglePush);
   document.addEventListener("visibilitychange", () => { if (!document.hidden) scheduleSync(300); });
   setInterval(() => scheduleSync(0), 5 * 60000);
   if (S.settings.syncToken) scheduleSync(600); else setSyncStatus("Add a GitHub token below to share one history with your PC.");

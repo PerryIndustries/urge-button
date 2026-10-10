@@ -1,0 +1,47 @@
+# Lives in the PRIVATE data repo (PerryIndustries/urge-data) as .github/workflows/headsup.yml.
+# Every hour at about :40 it checks whether the next hour is one of your hard hours and, if so,
+# sends the heads-up to your phone. Run it by hand with "test" ticked to send a test notification.
+name: heads-up
+
+on:
+  schedule:
+    - cron: "40 * * * *"
+  workflow_dispatch:
+    inputs:
+      test:
+        description: Send a test notification now
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: PerryIndustries/urge-button
+          path: app
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install --quiet pywebpush==2.5.0
+      - name: Send the heads-up if it's due
+        env:
+          VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}
+          TEST: ${{ inputs.test && '--test' || '' }}
+        run: |
+          printf '%s' "$VAPID_PRIVATE_KEY" > "$RUNNER_TEMP/vapid.pem"
+          VAPID_KEY_FILE="$RUNNER_TEMP/vapid.pem" python app/push/headsup_push.py . $TEST
+      - name: Remember an expired subscription
+        run: |
+          if [ -f push.json ] && ! git diff --quiet -- push.json; then
+            git config user.name "urge-bot"
+            git config user.email "urge-bot@users.noreply.github.com"
+            git commit -m "push subscription expired" -- push.json
+            git push
+          fi

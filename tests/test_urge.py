@@ -204,3 +204,33 @@ def test_blocker_never_closes_protected_apps():
     assert b.names == ["steam.exe", "chrome.exe"] and b.active()
     b.stop()
     assert not b.active()
+
+
+def test_cluster_minutes_ladder():
+    from urge_log import cluster_minutes
+    assert [cluster_minutes(3, n) for n in range(4)] == [3, 5, 10, 10]
+    assert cluster_minutes(8, 1) == 8      # your own length wins when it's already longer
+    assert cluster_minutes(25, 2) == 25
+
+
+def test_recent_locks_counts_only_locks_in_the_window(tmp_path):
+    log = make_log(tmp_path, [NOW - timedelta(minutes=10), NOW - timedelta(minutes=40)])
+    log.record_logged(2)
+    assert log.recent_locks() == 1
+
+
+def test_push_message_only_before_a_hard_hour():
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "push"))
+    from zoneinfo import ZoneInfo
+
+    import headsup_push as hp
+    tz = ZoneInfo("America/Toronto")
+    now = datetime(2026, 10, 10, 20, 40, tzinfo=tz)
+    nine_pm = [{"t": int((now.replace(hour=21) - timedelta(days=d)).timestamp() * 1000)} for d in range(1, 6)]
+    push = {"enabled": True, "subscription": {"endpoint": "x"}, "plan": "Make tea."}
+    title, body = hp.message(nine_pm, push, now)
+    assert body == "9 PM is usually one of your harder hours. Your plan: Make tea."
+    assert hp.message(nine_pm, push, now.replace(hour=18)) is None             # 7 PM isn't hard
+    assert hp.message(nine_pm, dict(push, enabled=False), now) is None
+    just_now = nine_pm + [{"t": int((now - timedelta(minutes=5)).timestamp() * 1000)}]
+    assert hp.message(just_now, push, now) is None                             # you just logged one

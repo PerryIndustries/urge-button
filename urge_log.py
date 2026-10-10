@@ -37,9 +37,20 @@ DEFAULT_CONFIG = {
     "sync_repo": "PerryIndustries/urge-data",
     "sync_token": "",            # blank = use this computer's GitHub CLI login
     "sync": True,
+    "escalate": True,            # longer locks when urges come close together
 }
 
 HEADS_UP_MINUTES = 10
+CLUSTER_WINDOW_MINUTES = 30
+CLUSTER_LADDER = (5, 10)  # minutes for the 2nd, and the 3rd-or-later, lock inside the window
+
+
+def cluster_minutes(base, recent_locks):
+    """Lock length when urges come close together: your usual length, then at least 5, then at least 10."""
+    if recent_locks <= 0:
+        return base
+    step = CLUSTER_LADDER[min(recent_locks, len(CLUSTER_LADDER)) - 1]
+    return min(MAX_LOCK_MINUTES, max(base, step))
 
 
 def hour_name(h):
@@ -347,6 +358,11 @@ class EventLog:
             for trig in e.get("triggers", []) or []:
                 counts[trig] = counts.get(trig, 0) + 1
         return sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+
+    def recent_locks(self, minutes=CLUSTER_WINDOW_MINUTES):
+        """Locks started in the last `minutes` minutes."""
+        since = self.now() - timedelta(minutes=minutes)
+        return sum(1 for t, e in self.times() if t >= since and e.get("kind", "lock") == "lock")
 
     def calmer_days(self, days=30):
         """Days below your own daily average over the window - progress that one bad day can't erase.
