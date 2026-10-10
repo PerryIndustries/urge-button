@@ -675,6 +675,10 @@ def main():
         desk = winapi.desktop_link()
         print("Desktop shortcut:", "ok" if winapi.make_shortcut(desk) else "FAILED", desk)
         print("Start with Windows:", "ok" if winapi.set_start_with_windows(True) else "FAILED", winapi.STARTUP_LINK)
+        import subprocess
+        subprocess.Popen([str(winapi.pythonw()), str(winapi.SCRIPT)], cwd=str(winapi.SCRIPT.parent),
+                         creationflags=0x00000008 | 0x00000200)  # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
+        print("Started. The URGE button is in the bottom-right corner (it was already running if you see only one).")
         return
     if len(sys.argv) >= 3 and sys.argv[1] == "--preview":
         run_preview(sys.argv[2], sys.argv[3] if len(sys.argv) > 3 else "options")

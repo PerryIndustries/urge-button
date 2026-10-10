@@ -12,7 +12,7 @@ cd urge-button
 python urge_button.py --install
 ```
 
-`--install` puts an "Urge Button" shortcut on the desktop and starts it with Windows. Double-click the shortcut to start it now. Right-click the floating button for Progress, Settings and Quit; Ctrl+Alt+U triggers the lock from anywhere.
+`--install` puts an "Urge Button" shortcut on the desktop, sets it to start with Windows, and starts it now. Right-click the floating button for Progress, Settings and Quit; Ctrl+Alt+U triggers the lock from anywhere.
 
 Your history and settings live in `%APPDATA%\UrgeButton\` (`events.json`, `config.json`), not in the repo. To bring your history to another computer, copy that folder across.
 
