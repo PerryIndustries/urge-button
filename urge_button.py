@@ -24,6 +24,7 @@ import sys
 import tkinter as tk
 from pathlib import Path
 
+import placement
 import theme
 import winapi
 from progress import ProgressWindow, fake_log
@@ -167,14 +168,15 @@ class LockScreen:
             self.blocker = winapi.KeyBlocker()
             self.blocker.start()
 
-        # Centre the content on the primary monitor (the one at 0,0).
+        # The black cover spans every monitor; the message sits in the middle of the chosen one.
         self.body = tk.Frame(self.win, bg=BG)
         if preview:
             self.body.place(relx=0.5, rely=0.5, anchor="center")
         else:
             vx, vy = winapi.virtual_screen()[:2]
-            sw, sh = app.root.winfo_screenwidth(), app.root.winfo_screenheight()
-            self.body.place(x=-vx + sw // 2, y=-vy + sh // 2, anchor="center")
+            mon = placement.find(winapi.monitors(), app.config.get("lock_monitor"))
+            cx, cy = placement.centre_in(mon, vx, vy)
+            self.body.place(x=cx, y=cy, anchor="center")
 
         tk.Label(self.body, text="Breathe. This passes.", font=(FONT, 30, "bold"), fg=TEXT, bg=BG).pack()
         tk.Label(self.body, text=f"Urge #{app.log.today()} today  ·  {app.log.this_week()} this week",
@@ -366,6 +368,9 @@ class SettingsWindow:
         def label(text):
             tk.Label(w, text=text, font=(FONT, 11), fg=MUTED, bg=BG, anchor="w").pack(fill="x", pady=(10, 2))
 
+        self.build_placement(w)
+        tk.Frame(w, bg=PANEL_HI, height=1).pack(fill="x", pady=(16, 4))
+
         label(f"Lock length (minutes, 1-{MAX_LOCK_MINUTES})")
         self.minutes = tk.Spinbox(w, from_=1, to=MAX_LOCK_MINUTES, width=6, font=(FONT, 12), **FIELD,
                                  buttonbackground=PANEL_HI)
@@ -396,6 +401,78 @@ class SettingsWindow:
         button(bar, "Save", self.save, primary=True).pack(side="right")
         button(bar, "Cancel", w.destroy).pack(side="right", padx=6)
 
+    # -- where the button and the lock message go (these apply straight away)
+
+    def build_placement(self, w):
+        app = self.app
+        self.mons = winapi.monitors()
+        labels = [placement.label(m, i) for i, m in enumerate(self.mons)]
+        by_label = dict(zip(labels, self.mons))
+
+        head = tk.Frame(w, bg=BG)
+        head.pack(fill="x")
+        tk.Label(head, text="Where things go", font=(FONT, 13, "bold"), fg=TEXT, bg=BG).pack(side="left")
+        if len(self.mons) > 1:
+            button(head, "Identify monitors", self.identify, size=10).pack(side="right")
+        tk.Label(w, text="Changes here move the button right away. You can also drag it anywhere.",
+                 font=(FONT, 10), fg=MUTED, bg=BG, anchor="w").pack(fill="x", pady=(2, 0))
+
+        def current_label(name):
+            mon = placement.find(self.mons, name)
+            return labels[self.mons.index(mon)] if mon else ""
+
+        def dropdown(parent, var, on_pick):
+            menu = tk.OptionMenu(parent, var, *labels, command=on_pick)
+            menu.config(font=(FONT, 11), bg=PANEL, fg=TEXT, activebackground=PANEL_HI, activeforeground=TEXT,
+                        highlightthickness=0, relief="flat", anchor="w", width=30)
+            menu["menu"].config(font=(FONT, 11), bg=PANEL, fg=TEXT, activebackground=ACCENT)
+            return menu
+
+        tk.Label(w, text="Button on", font=(FONT, 11), fg=MUTED, bg=BG, anchor="w").pack(fill="x", pady=(10, 2))
+        self.button_mon = tk.StringVar(value=current_label(app.config.get("button_monitor")))
+        dropdown(w, self.button_mon, lambda lab: app.move_button(monitor_name=by_label[lab].name)).pack(anchor="w")
+
+        tk.Label(w, text="Button position", font=(FONT, 11), fg=MUTED, bg=BG, anchor="w").pack(fill="x", pady=(10, 2))
+        grid = tk.Frame(w, bg=BG)
+        grid.pack(anchor="w")
+        self.anchor_cells = {}
+        for i, (key, text) in enumerate(placement.ANCHORS):
+            cell = tk.Label(grid, text=text, font=(FONT, 10), fg=TEXT, bg=PANEL_HI, width=13, pady=7, cursor="hand2")
+            cell.grid(row=i // 3, column=i % 3, padx=(0, 4), pady=(0, 4))
+            cell.bind("<Button-1>", lambda e, k=key: self.pick_anchor(k))
+            self.anchor_cells[key] = cell
+        self.paint_anchor()
+
+        tk.Label(w, text="Lock-screen message on (the whole screen still goes dark)", font=(FONT, 11),
+                 fg=MUTED, bg=BG, anchor="w").pack(fill="x", pady=(10, 2))
+        self.lock_mon = tk.StringVar(value=current_label(app.config.get("lock_monitor")))
+
+        def pick_lock(lab):
+            app.config["lock_monitor"] = by_label[lab].name
+            app.save_config()
+
+        dropdown(w, self.lock_mon, pick_lock).pack(anchor="w")
+
+    def pick_anchor(self, key):
+        self.app.move_button(anchor=key)
+        self.paint_anchor()
+
+    def paint_anchor(self):
+        current = self.app.config.get("button_anchor")
+        for key, cell in self.anchor_cells.items():
+            cell.config(bg=ACCENT if key == current else PANEL_HI)
+
+    def identify(self):
+        """Flash each monitor's number in its middle for a few seconds."""
+        for i, m in enumerate(self.mons):
+            t = tk.Toplevel(self.win, bg=ACCENT)
+            t.overrideredirect(True)
+            t.attributes("-topmost", True)
+            size = px(200)
+            t.geometry(f"{size}x{size}{m.x + (m.w - size) // 2:+d}{m.y + (m.h - size) // 2:+d}")
+            tk.Label(t, text=str(i + 1), font=(FONT, 96, "bold"), fg=TEXT, bg=ACCENT).pack(expand=True)
+            t.after(2500, t.destroy)
+
     def save(self):
         cfg = self.app.config
         cfg["lock_minutes"] = clamp_minutes(self.minutes.get())
@@ -417,6 +494,7 @@ class App:
         self.config = load_config()
         self.log = log or EventLog()
         self.lock = None
+        self.settings = None
 
         root = self.root = tk.Tk()
         theme.init_scale(root)
@@ -425,12 +503,7 @@ class App:
         root.attributes("-topmost", True)
         root.configure(bg=ACCENT)
 
-        w, h = px(self.W), px(self.H)
-        x, y = self.config.get("button_x"), self.config.get("button_y")
-        if x is None or y is None or not (0 <= x < root.winfo_vrootwidth() and 0 <= y < root.winfo_vrootheight()):
-            x = root.winfo_screenwidth() - w - px(24)
-            y = root.winfo_screenheight() - h - px(72)
-        root.geometry(f"{w}x{h}+{x}+{y}")
+        self.place_button()
 
         self.face = tk.Frame(root, bg=ACCENT, cursor="hand2")
         self.face.pack(fill="both", expand=True)
@@ -439,11 +512,18 @@ class App:
         self.title.pack(pady=(px(8), 0))
         self.sub.pack()
 
+        # Settings gear in the corner; its clicks never start a lock or a drag.
+        gear = tk.Label(self.face, text="⚙", font=("Segoe UI Symbol", 11), fg=TEXT, bg=ACCENT, cursor="hand2")
+        gear.place(relx=1.0, x=-px(4), y=px(1), anchor="ne")
+        gear.bind("<Button-1>", lambda e: self.open_settings())
+        gear.bind("<Enter>", lambda e: gear.config(fg="#C9CCFF"))
+        gear.bind("<Leave>", lambda e: gear.config(fg=TEXT))
+
         menu = self.menu = tk.Menu(root, tearoff=0)
         menu.add_command(label="Progress", command=self.show_progress)
         menu.add_command(label="Log an urge I handled on my own", command=lambda: LogOwnWindow(self))
         menu.add_separator()
-        menu.add_command(label="Settings", command=lambda: SettingsWindow(self))
+        menu.add_command(label="Settings", command=self.open_settings)
         menu.add_command(label="Quit", command=root.destroy)
 
         for wdg in (self.face, self.title, self.sub):
@@ -475,6 +555,39 @@ class App:
     def save_config(self):
         save_json(CONFIG_PATH, self.config)
 
+    def open_settings(self):
+        if self.settings and self.settings.win.winfo_exists():
+            self.settings.win.lift()
+            self.settings.win.focus_force()
+        else:
+            self.settings = SettingsWindow(self)
+
+    def place_button(self):
+        """Put the button where the config says, falling back to the main monitor if that spot is gone."""
+        w, h = px(self.W), px(self.H)
+        mons = winapi.monitors()
+        cfg = self.config
+        x, y = cfg.get("button_x"), cfg.get("button_y")
+        anchor = cfg.get("button_anchor") or "bottom-right"
+        if anchor == "custom" and x is not None and y is not None and placement.on_screen(mons, x, y, w, h):
+            pass
+        else:
+            if anchor == "custom":
+                anchor = "bottom-right"
+            mon = placement.find(mons, cfg.get("button_monitor"))
+            x, y = placement.anchor_position(mon, w, h, anchor, margin=px(24))
+        self.root.geometry(f"{w}x{h}{x:+d}{y:+d}")
+
+    def move_button(self, monitor_name=None, anchor=None):
+        if monitor_name is not None:
+            self.config["button_monitor"] = monitor_name
+        if anchor is not None:
+            self.config["button_anchor"] = anchor
+        elif self.config.get("button_anchor") == "custom":
+            self.config["button_anchor"] = "bottom-right"  # a new monitor needs a spot on it
+        self.place_button()
+        self.save_config()
+
     # click vs drag: a press that moves more than a few pixels is a drag.
 
     def _press(self, e):
@@ -487,11 +600,16 @@ class App:
         if abs(dx) + abs(dy) > 4:
             self._moved = True
         if self._moved:
-            self.root.geometry(f"+{wx + dx}+{wy + dy}")
+            self.root.geometry(f"{wx + dx:+d}{wy + dy:+d}")
 
     def _release(self, e):
         if self._moved:
-            self.config["button_x"], self.config["button_y"] = self.root.winfo_x(), self.root.winfo_y()
+            x, y = self.root.winfo_x(), self.root.winfo_y()
+            cfg = self.config
+            cfg["button_x"], cfg["button_y"], cfg["button_anchor"] = x, y, "custom"
+            here = [m for m in winapi.monitors() if m.contains(x + px(self.W) // 2, y + px(self.H) // 2)]
+            if here:
+                cfg["button_monitor"] = here[0].name
             self.save_config()
         else:
             self.trigger()

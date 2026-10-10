@@ -129,6 +129,43 @@ class Hotkey:
         return self.ok
 
 
+class MONITORINFOEXW(ctypes.Structure):
+    _fields_ = [
+        ("cbSize", wintypes.DWORD),
+        ("rcMonitor", wintypes.RECT),
+        ("rcWork", wintypes.RECT),
+        ("dwFlags", wintypes.DWORD),
+        ("szDevice", wintypes.WCHAR * 32),
+    ]
+
+
+MONITORENUMPROC = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HMONITOR, wintypes.HDC,
+                                     ctypes.POINTER(wintypes.RECT), wintypes.LPARAM)
+user32.EnumDisplayMonitors.argtypes = [wintypes.HDC, ctypes.c_void_p, MONITORENUMPROC, wintypes.LPARAM]
+user32.GetMonitorInfoW.argtypes = [wintypes.HMONITOR, ctypes.POINTER(MONITORINFOEXW)]
+
+
+def monitors():
+    """Every connected monitor, numbered left to right."""
+    from placement import Monitor, numbered
+
+    found = []
+
+    def cb(hmon, hdc, rect, lparam):
+        info = MONITORINFOEXW()
+        info.cbSize = ctypes.sizeof(MONITORINFOEXW)
+        if user32.GetMonitorInfoW(hmon, ctypes.byref(info)):
+            r, w = info.rcMonitor, info.rcWork
+            found.append(Monitor(
+                name=info.szDevice, x=r.left, y=r.top, w=r.right - r.left, h=r.bottom - r.top,
+                work=(w.left, w.top, w.right - w.left, w.bottom - w.top), primary=bool(info.dwFlags & 1),
+            ))
+        return True
+
+    user32.EnumDisplayMonitors(None, None, MONITORENUMPROC(cb), 0)
+    return numbered(found)
+
+
 def virtual_screen():
     """Bounding box of every monitor: (x, y, width, height)."""
     g = user32.GetSystemMetrics

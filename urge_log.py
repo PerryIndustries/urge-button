@@ -23,6 +23,9 @@ DEFAULT_CONFIG = {
     "friends": [],
     "button_x": None,
     "button_y": None,
+    "button_monitor": None,      # Windows device name; None = the main monitor
+    "button_anchor": "bottom-right",  # a placement.ANCHORS key, or "custom" after a drag
+    "lock_monitor": None,        # where the lock-screen message shows; None = the main monitor
 }
 
 OPTIONS = [
@@ -58,7 +61,10 @@ def clamp_minutes(value):
 
 def load_config(path=CONFIG_PATH):
     cfg = dict(DEFAULT_CONFIG)
-    cfg.update(load_json(path, {}))
+    saved = load_json(path, {})
+    cfg.update(saved)
+    if "button_anchor" not in saved and saved.get("button_x") is not None:
+        cfg["button_anchor"] = "custom"  # dragged before anchors existed: keep it where it was
     cfg["lock_minutes"] = clamp_minutes(cfg.get("lock_minutes"))
     return cfg
 
