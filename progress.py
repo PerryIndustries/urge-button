@@ -13,6 +13,7 @@ from urge_log import OPTION_NAMES, format_gap
 HOURS = ["12a", "1a", "2a", "3a", "4a", "5a", "6a", "7a", "8a", "9a", "10a", "11a",
          "12p", "1p", "2p", "3p", "4p", "5p", "6p", "7p", "8p", "9p", "10p", "11p"]
 WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+FULL_DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
 
 
 def hour_range(h):
@@ -225,6 +226,37 @@ class ProgressWindow:
         tk.Label(f, text=value, font=(FONT, 22, "bold"), fg=TEXT, bg=PANEL, anchor="w").pack(fill="x")
         tk.Label(f, text=sub, font=(FONT, 9), fg=sub_color, bg=PANEL, anchor="w").pack(fill="x")
 
+    def review(self, r):
+        """'Last week in review': a few plain sentences, only the ones there's data for."""
+        if not r:
+            return
+        facts = []
+        total, prev = r["total"], r["previous"]
+        if total < prev:
+            facts.append((f"{plural(total, 'urge')}, down from {prev} the week before", GOOD))
+        elif total > prev:
+            facts.append((f"{plural(total, 'urge')}, up from {prev} the week before", WARN))
+        else:
+            facts.append((f"{plural(total, 'urge')}, same as the week before", TEXT))
+        if r["calm_days"] is not None:
+            facts.append((f"{r['calm_days']} of 7 days were calmer than your usual", GOOD if r["calm_days"] >= 4 else TEXT))
+        if r["hardest_hour"] is not None:
+            facts.append((f"Hardest hour: {hour_range(r['hardest_hour'])}", TEXT))
+        if total:
+            facts.append((f"Quietest day: {FULL_DAYS[r['quietest_day']]}", TEXT))
+        if r["top_trigger"]:
+            facts.append((f"Most common trigger: {r['top_trigger']}", TEXT))
+        if r["best_option"]:
+            key, drop = r["best_option"]
+            facts.append((f"What helped most: {OPTION_NAMES[key]} ({drop:.1f} calmer)", GOOD))
+        panel = tk.Frame(self.win, bg=PANEL, padx=px(16), pady=px(10))
+        panel.pack(fill="x", pady=(0, px(12)))
+        tk.Label(panel, text="Last week in review", font=(FONT, 12, "bold"), fg=TEXT, bg=PANEL).grid(
+            row=0, column=0, columnspan=3, sticky="w", pady=(0, px(4)))
+        for i, (text, colour) in enumerate(facts[:6]):
+            tk.Label(panel, text="• " + text, font=(FONT, 10), fg=colour, bg=PANEL, anchor="w").grid(
+                row=1 + i // 3, column=i % 3, sticky="w", padx=(0, px(28)), pady=px(1))
+
     def canvas(self, parent, w, h):
         c = tk.Canvas(parent, width=w, height=h, bg=CHART_BG, highlightthickness=0)
         c.pack(pady=(0, px(10)), anchor="w")
@@ -261,6 +293,8 @@ class ProgressWindow:
         locks = sum(1 for e in log.events if e.get("kind", "lock") == "lock")
         self.tile(tiles, "All time", str(len(log.events)), f"{locks} locked  ·  {len(log.events) - locks} on your own")
 
+        self.review(log.week_review())
+
         cols = tk.Frame(self.win, bg=BG)
         cols.pack(fill="x")
         left = tk.Frame(cols, bg=BG)
@@ -270,52 +304,52 @@ class ProgressWindow:
         LW, RW = px(600), px(460)
 
         # Today by hour
-        c, tip = self.canvas(left, LW, px(200))
+        c, tip = self.canvas(left, LW, px(176))
         hours = log.by_hour()
         titled(c, "Today, hour by hour", f"{plural(today, 'urge')} so far today")
-        bar_chart(c, tip, (px(10), px(64), LW - px(26), px(126)), hours,
+        bar_chart(c, tip, (px(10), px(60), LW - px(26), px(106)), hours,
                   {i: HOURS[i] for i in range(0, 24, 3)},
                   [f"{hour_range(i)}\n{plural(v, 'urge')}" for i, v in enumerate(hours)],
                   highlight={now.hour})
         if today == 0:
-            c.create_text(LW / 2, px(120), text="Nothing logged yet today.", fill=MUTED, font=(FONT, 10))
+            c.create_text(LW / 2, px(108), text="Nothing logged yet today.", fill=MUTED, font=(FONT, 10))
 
         # Last 30 days with a 7-day average
-        c, tip = self.canvas(left, LW, px(220))
+        c, tip = self.canvas(left, LW, px(200))
         days = log.per_day(30)
         counts = [v for _, v in days]
         extended = [v for _, v in log.per_day(36)]
         avg = [sum(extended[i:i + 7]) / 7 for i in range(30)]
         titled(c, "Last 30 days", f"{plural(sum(counts), 'urge')} · line is the 7-day average")
-        bar_chart(c, tip, (px(10), px(64), LW - px(26), px(146)), counts,
+        bar_chart(c, tip, (px(10), px(60), LW - px(26), px(130)), counts,
                   {i: f"{days[i][0]:%d %b}" for i in (0, 7, 14, 21, 29)},
                   [f"{d:%a %d %b}\n{plural(v, 'urge')}\n7-day avg {a:.1f}" for (d, v), a in zip(days, avg)],
                   highlight={29}, line=avg)
 
         # Strength trend
-        c, tip = self.canvas(left, LW, px(190))
+        c, tip = self.canvas(left, LW, px(176))
         titled(c, "How strong the urges were", "average rating when they hit, per day · 1 = mild, 5 = intense")
-        intensity_chart(c, tip, (px(10), px(62), LW - px(26), px(118)), log.intensity_per_day(30))
+        intensity_chart(c, tip, (px(10), px(58), LW - px(26), px(108)), log.intensity_per_day(30))
 
         # When urges hit
-        c, tip = self.canvas(right, RW, px(240))
+        c, tip = self.canvas(right, RW, px(214))
         titled(c, "When urges hit", "last 30 days by day and hour · brighter = more")
-        heatmap(c, tip, (px(10), px(60), RW - px(24), px(172)), log.heat(30))
+        heatmap(c, tip, (px(10), px(56), RW - px(24), px(150)), log.heat(30))
 
         # What you did, and whether it helped
-        c, tip = self.canvas(right, RW, px(222))
+        c, tip = self.canvas(right, RW, px(196))
         titled(c, "What you did instead", "last 30 days · right side: how much calmer at unlock than at the start")
-        hbars(c, (px(16), px(62), RW - px(32), px(150)), choice_rows(log.choice_counts(30), log.relief_by_choice(30)),
+        hbars(c, (px(16), px(58), RW - px(32), px(132)), choice_rows(log.choice_counts(30), log.relief_by_choice(30)),
               label_w=160, note_w=120)
 
         # What sets it off
-        c, tip = self.canvas(right, RW, px(200))
+        c, tip = self.canvas(right, RW, px(162))
         titled(c, "What sets it off", "last 30 days · tap these in when the lock ends")
         trig = log.trigger_counts(30)[:5]
         if trig:
-            hbars(c, (px(16), px(62), RW - px(32), px(130)), [(n, v, "", MUTED) for n, v in trig], label_w=130, note_w=0)
+            hbars(c, (px(16), px(58), RW - px(32), px(98)), [(n, v, "", MUTED) for n, v in trig[:4]], label_w=130, note_w=0)
         else:
-            c.create_text(RW / 2, px(120), text="Nothing yet. Pick what set it off when a lock ends.",
+            c.create_text(RW / 2, px(104), text="Nothing yet. Pick what set it off when a lock ends.",
                           fill=MUTED, font=(FONT, 10))
 
         self.win.after(60_000, self._refresh)
@@ -344,9 +378,9 @@ def fake_log(path, days=40, seed=7):
             if t > end:
                 continue
             kind = "logged" if rng.random() < 0.2 else "lock"
-            choices = [] if kind == "logged" else rng.sample(["walk", "spotify", "sudoku", "friend"], rng.choice([0, 1, 1, 2]))
+            choices = [] if kind == "logged" else rng.sample(["breathe", "walk", "spotify", "sudoku", "friend"], rng.choice([0, 1, 1, 2]))
             start = None if rng.random() < 0.2 else max(1, min(5, round(rng.gauss(2.5 + back / 20, 1))))
-            help_ = {"walk": 2, "friend": 1.5, "spotify": 1, "sudoku": 0.5}
+            help_ = {"walk": 2, "friend": 1.5, "breathe": 1.2, "spotify": 1, "sudoku": 0.5}
             drop = max([help_.get(ch, 0.3) for ch in choices] or [0.3]) + rng.gauss(0, 0.6)
             finish = None if start is None or kind == "logged" else max(1, min(5, round(start - drop)))
             triggers = rng.sample(["Bored", "Stressed", "Lonely", "Tired", "Late night", "After gaming"],

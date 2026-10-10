@@ -114,6 +114,16 @@ nav.bar button[aria-current=true] { color: var(--text); background: var(--panel)
 .opt b { font-size: 16px; }
 .opt span { color: var(--muted); font-size: 12.5px; }
 .opt:active { background: var(--panel-2); }
+.opts .opt:first-child { grid-column: 1 / -1; }
+.breath { width: min(78vw, 300px); aspect-ratio: 1; border-radius: 50%; border: 2px solid var(--panel-2); display: grid; place-items: center; position: relative; }
+.breath i { position: absolute; inset: 0; margin: auto; width: 40%; aspect-ratio: 1; border-radius: 50%; background: var(--accent); }
+.breath b { position: relative; font-size: 19px; }
+.banner { background: var(--panel); border: 1px solid var(--warn); border-radius: 12px; padding: 12px 14px; display: grid; gap: 4px; }
+.banner b { color: var(--warn); font-size: 14px; }
+.banner span { color: var(--muted); font-size: 13px; }
+.review { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; font-size: 14px; }
+.review li::before { content: "\2022  "; color: var(--muted); }
+.review .good { color: var(--good); } .review .warn { color: var(--warn); }
 .stage { width: 100%; display: grid; gap: 12px; justify-items: center; }
 .say { background: var(--panel); border-radius: 12px; padding: 14px 16px; font-size: 17px; font-style: italic; width: 100%; user-select: text; }
 .link { display: inline-block; background: var(--accent); color: var(--text); text-decoration: none; border-radius: 10px; padding: 12px 18px; font-weight: 700; }
@@ -161,6 +171,7 @@ nav.bar button[aria-current=true] { color: var(--text); background: var(--panel)
   </div>
 
   <section class="tab" id="tab-home">
+    <div class="banner" id="banner" hidden></div>
     <div class="hero">
       <button class="urge" id="urgeBtn" aria-label="I have an urge - start the lock">
         <b>URGE</b><span id="lockLen">3 minute lock</span>
@@ -180,6 +191,7 @@ nav.bar button[aria-current=true] { color: var(--text); background: var(--panel)
   <section class="tab" id="tab-progress" hidden>
     <div><h2>Your progress</h2><p class="sub">Fewer, weaker and further apart is the trend you're after. Tap any bar for its number.</p></div>
     <div class="tiles" id="progTiles"></div>
+    <div class="card" id="reviewCard" hidden><h3>Last week in review</h3><ul class="review" id="review"></ul></div>
     <div class="card"><div><h3>Today, hour by hour</h3><p class="sub" id="todaySub"></p></div><div id="todayChart"></div></div>
     <div class="card"><div><h3>Last 30 days</h3><p class="sub" id="monthSub"></p></div><div id="monthChart"></div></div>
     <div class="card"><div><h3>When urges hit</h3><p class="sub">Last 30 days by day and hour. Brighter means more.</p></div><div id="heatChart"></div></div>
@@ -205,6 +217,8 @@ nav.bar button[aria-current=true] { color: var(--text); background: var(--panel)
     <label class="f" for="setFriends">Friends to reach out to, one per line
       <textarea id="setFriends" placeholder="Sam&#10;Jordan"></textarea>
     </label>
+    <label class="row" for="setHeadsUp" style="gap:10px;font-size:14px"><input type="checkbox" id="setHeadsUp" style="width:20px;height:20px;accent-color:var(--accent)"> Show a heads-up during my usual hard hours</label>
+    <p class="note" id="riskyNote"></p>
     <div class="row"><button class="btn primary" id="saveSettings">Save</button><span class="note" id="savedNote"></span></div>
     <label class="f" for="setShortcut">iPhone Shortcut to run when you tap URGE (leave blank for none)
       <input type="text" id="setShortcut" placeholder="Urge Mode" autocomplete="off" autocapitalize="off">
@@ -243,12 +257,13 @@ nav.bar button[aria-current=true] { color: var(--text); background: var(--panel)
   const $ = (id) => document.getElementById(id);
   const DAY = 86400000;
   const OPTIONS = [
+    ["breathe", "Breathe with me", "One slow minute. Follow the circle."],
     ["walk", "Go for a walk", "Shoes on. Out the door."],
     ["spotify", "Play some music", "Put a playlist on."],
     ["sudoku", "Play Sudoku", "Give your hands something to do."],
     ["friend", "Reach out", "Text a friend."],
   ];
-  const NAMES = { walk: "Go for a walk", spotify: "Play some music", sudoku: "Play Sudoku", friend: "Reach out to a friend", on_own: "Handled it on my own" };
+  const NAMES = { breathe: "Breathe with me", walk: "Go for a walk", spotify: "Play some music", sudoku: "Play Sudoku", friend: "Reach out to a friend", on_own: "Handled it on my own" };
   const PROMPTS = [
     "hey, been thinking about you. how's your week going?",
     "random q: what's the best thing that happened to you this week?",
@@ -335,7 +350,7 @@ nav.bar button[aria-current=true] { color: var(--text); background: var(--panel)
       const v = ev.filter((e) => e.t >= d && e.t < dayStart(d, -1) && strengthOf(e) != null).map(strengthOf);
       return { d, v: v.length ? v.reduce((a, b) => a + b, 0) / v.length : null };
     });
-    const choices = { walk: 0, spotify: 0, sudoku: 0, friend: 0, on_own: 0 };
+    const choices = { breathe: 0, walk: 0, spotify: 0, sudoku: 0, friend: 0, on_own: 0 };
     ev.forEach((e) => { if (e.t < since30) return; if (e.kind === "logged") choices.on_own++; (e.choices || []).forEach((c) => { choices[c] = (choices[c] || 0) + 1; }); });
     const locks = ev.filter((e) => e.kind !== "logged").length;
     const drops = {}, trig = {};
@@ -349,7 +364,32 @@ nav.bar button[aria-current=true] { color: var(--text); background: var(--panel)
     const relief = {};
     Object.entries(drops).forEach(([c, v]) => { relief[c] = [v.reduce((a, b) => a + b, 0) / v.length, v.length]; });
     const triggers = Object.entries(trig).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
-    return { ev, now, today, yday, week, lastWeek, last, longest, perDay, byHour, heat, strength, choices, locks, relief, triggers };
+    // hard hours: at least 4 urges in that hour over 28 days, and twice the hourly average
+    const hourCounts = Array(24).fill(0), since28 = dayStart(now, 27);
+    ev.forEach((e) => { if (e.t >= since28) hourCounts[new Date(e.t).getHours()]++; });
+    const total28 = hourCounts.reduce((a, b) => a + b, 0), threshold = Math.max(4, 2 * total28 / 24);
+    const risky = new Set(hourCounts.map((n, h) => n >= threshold ? h : -1).filter((h) => h >= 0));
+    // last week (Mon-Sun) vs the week before
+    const mon = sow(now), lwStart = mon - 7 * DAY, pwStart = mon - 14 * DAY;
+    const lw = ev.filter((e) => e.t >= lwStart && e.t < mon), pw = ev.filter((e) => e.t >= pwStart && e.t < lwStart);
+    let review = null;
+    if (lw.length || pw.length) {
+      const perDayLW = Array(7).fill(0), hrs = Array(24).fill(0), tg = {};
+      lw.forEach((e) => { const d = new Date(e.t); perDayLW[(d.getDay() + 6) % 7]++; hrs[d.getHours()]++; (e.triggers || []).forEach((t) => { tg[t] = (tg[t] || 0) + 1; }); });
+      const base = ev.filter((e) => e.t >= lwStart - 28 * DAY && e.t < lwStart).length;
+      const usual = base ? base / 28 : null;
+      const best = Object.entries(relief).filter(([k, v]) => v[1] >= 2 && k !== "none").sort((a, b) => b[1][0] - a[1][0])[0];
+      const topTrig = Object.entries(tg).sort((a, b) => b[1] - a[1])[0];
+      review = {
+        total: lw.length, previous: pw.length,
+        calmDays: usual == null ? null : perDayLW.filter((n) => n < usual).length,
+        hardestHour: hrs.some(Boolean) ? hrs.indexOf(Math.max(...hrs)) : null,
+        quietest: perDayLW.reduce((bi, n, i) => n <= perDayLW[bi] ? i : bi, 0),
+        topTrigger: topTrig ? topTrig[0] : null,
+        best: best && best[1][0] > 0 ? [best[0], best[1][0]] : null,
+      };
+    }
+    return { ev, now, today, yday, week, lastWeek, last, longest, perDay, byHour, heat, strength, choices, locks, relief, triggers, risky, review };
   }
   function delta(a, b, unit) {
     const d = a - b;
@@ -450,6 +490,31 @@ nav.bar button[aria-current=true] { color: var(--text); background: var(--panel)
   const fmtShort = (t) => new Date(t).toLocaleDateString(undefined, { day: "numeric", month: "short" });
   const fmtTime = (t) => new Date(t).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
 
+  const hourName = (h) => (h % 12 || 12) + " " + (h < 12 ? "AM" : "PM");
+  const FULL_DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+  function renderBanner(s) {
+    // during a hard hour, or in the 15 minutes before one
+    const d = new Date(s.now), h = d.getHours(), next = (h + 1) % 24;
+    const soon = d.getMinutes() >= 45 && s.risky.has(next);
+    const hour = s.risky.has(h) ? h : soon ? next : null;
+    const on = S.settings.headsUp !== false && hour != null && !(s.last && s.now - s.last < 30 * 60000);
+    $("banner").hidden = !on;
+    if (on) $("banner").innerHTML = `<b>Heads up</b><span>${hourName(hour)} is usually one of your harder hours. Have a plan ready: a walk, some music, or a text to someone.</span>`;
+  }
+  function renderReview(r) {
+    $("reviewCard").hidden = !r;
+    if (!r) return;
+    const li = [];
+    const cmp = r.total < r.previous ? ["good", `down from ${r.previous}`] : r.total > r.previous ? ["warn", `up from ${r.previous}`] : ["", "same as"];
+    li.push(`<li class="${cmp[0]}">${plural(r.total, "urge")}, ${cmp[1]} the week before</li>`);
+    if (r.calmDays != null) li.push(`<li class="${r.calmDays >= 4 ? "good" : ""}">${r.calmDays} of 7 days were calmer than your usual</li>`);
+    if (r.hardestHour != null) li.push(`<li>Hardest hour: ${HOURS[r.hardestHour]}-${HOURS[(r.hardestHour + 1) % 24]}</li>`);
+    if (r.total) li.push(`<li>Quietest day: ${FULL_DAYS[r.quietest]}</li>`);
+    if (r.topTrigger) li.push(`<li>Most common trigger: ${esc(r.topTrigger)}</li>`);
+    if (r.best) li.push(`<li class="good">What helped most: ${NAMES[r.best[0]]} (${r.best[1].toFixed(1)} calmer)</li>`);
+    $("review").innerHTML = li.join("");
+  }
+
   // tooltips: one delegated handler for every chart
   const tip = $("tip");
   function showTip(e) {
@@ -502,6 +567,8 @@ nav.bar button[aria-current=true] { color: var(--text); background: var(--panel)
     $("heatChart").innerHTML = heatmap(s.heat);
     $("strengthChart").innerHTML = strengthLine(s.strength);
     $("choiceChart").innerHTML = choiceBars(s.choices, s.relief);
+    renderBanner(s); renderReview(s.review);
+    $("riskyNote").textContent = s.risky.size ? "Your hard hours right now: " + [...s.risky].sort((a, b) => a - b).map(hourName).join(", ") + "." : "Your hard hours show up once your history has a pattern.";
     $("triggerChart").innerHTML = s.triggers.length ? hbars(s.triggers.slice(0, 6).map(([t, n]) => [t, n, "", ""]), 110, 0)
       : `<p class="empty">Nothing yet. Pick what set it off when a lock ends.</p>`;
   }
@@ -566,13 +633,30 @@ nav.bar button[aria-current=true] { color: var(--text); background: var(--panel)
   function chipsHTML(selected) {
     return `<div class="chips">${TRIGGERS.map((t) => `<button data-trig="${esc(t)}" aria-pressed="${selected.includes(t)}">${esc(t)}</button>`).join("")}</div>`;
   }
+  function breathe() {
+    stage(`<h2>Breathe with me</h2><div class="breath" id="breath"><i id="breathDot"></i><b id="breathLabel">Breathe in</b></div>
+      <p class="note" id="breathNote"></p>${backBtn()}`);
+    const phases = [["Breathe in", 4, 0, 1], ["Hold", 4, 1, 1], ["Breathe out", 6, 1, 0]];
+    const cycle = 14, t0 = performance.now();
+    const step = () => {
+      const dot = $("breathDot"); if (!dot) return;   // stage changed: stop
+      const el = (performance.now() - t0) / 1000;
+      let t = el % cycle, v = 0, name = "";
+      for (const [n, d, a, b] of phases) { if (t < d) { v = a + (b - a) * (1 - Math.cos(Math.PI * t / d)) / 2; name = n; break; } t -= d; }
+      dot.style.transform = `scale(${1 + 1.4 * v})`;
+      $("breathLabel").textContent = name;
+      $("breathNote").textContent = "Breath " + (Math.floor(el / cycle) + 1) + ". Keep going as long as it helps.";
+      requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  }
   function options() {
     showWhy(true);
     stage(`<p class="sub">Pick one:</p><div class="opts">${OPTIONS.map(([k, t, d]) => `<button class="opt" data-opt="${k}"><b>${t}</b><span>${d}</span></button>`).join("")}</div>`);
   }
   function choose(k) {
     updateEvent(active.id, (e) => { e.choices = e.choices || []; if (!e.choices.includes(k)) e.choices.push(k); return e; });
-    ({ walk, spotify, sudoku, friend })[k]();
+    ({ breathe, walk, spotify, sudoku, friend })[k]();
   }
   function walk() {
     stage(`<h2>Go for a walk</h2><p class="note" style="font-size:15px">Stand up. Shoes on. Phone in your pocket, not your hand.<br>Walk to the end of the street and back, or around the block.<br>Notice five things you can see on the way.<br><br>The timer keeps going while you're out.</p>${backBtn()}`);
@@ -725,6 +809,7 @@ nav.bar button[aria-current=true] { color: var(--text); background: var(--panel)
     $("setMinutes").value = S.settings.lockMinutes;
     $("setSpotify").value = S.settings.spotify || "";
     $("setReasons").value = (S.settings.reasons || []).join("\n");
+    $("setHeadsUp").checked = S.settings.headsUp !== false;
     $("photoPreview").src = S.settings.photo || "";
     $("photoPreview").hidden = $("clearPhoto").hidden = !S.settings.photo;
     $("setFriends").value = (S.settings.friends || []).join("\n");
@@ -734,7 +819,7 @@ nav.bar button[aria-current=true] { color: var(--text); background: var(--panel)
     const m = Math.max(1, Math.min(30, parseInt($("setMinutes").value, 10) || 3));
     const sp = $("setSpotify").value.trim();
     S.settings = { lockMinutes: m, spotify: sp, shortcut: $("setShortcut").value.trim(), friends: $("setFriends").value.split("\n").map((x) => x.trim()).filter(Boolean),
-      reasons: $("setReasons").value.split("\n").map((x) => x.trim()).filter(Boolean), photo: S.settings.photo || "" };
+      reasons: $("setReasons").value.split("\n").map((x) => x.trim()).filter(Boolean), photo: S.settings.photo || "", headsUp: $("setHeadsUp").checked };
     persistSettings(); fillSettings(); render();
     $("savedNote").textContent = sp && !/^https:\/\/open\.spotify\.com\//.test(sp) ? "Saved. That Spotify link doesn't look like an open.spotify.com link." : "Saved.";
   });

@@ -127,3 +127,37 @@ def test_strength_prefers_the_start_rating(tmp_path):
     assert strength({"intensity_start": 4, "intensity": 2}) == 4
     assert strength({"intensity": 2}) == 2  # events from before start ratings existed
     assert strength({}) is None
+
+
+def test_heads_up_fires_once_in_the_ten_minutes_before_a_risky_hour():
+    from urge_log import heads_up_due
+    at = lambda h, m: datetime(2026, 10, 10, h, m)  # noqa: E731
+    assert heads_up_due(at(20, 49), {21}, None, None) is None          # too early
+    key = heads_up_due(at(20, 52), {21}, None, None)
+    assert key == "2026-10-10 21"
+    assert heads_up_due(at(20, 55), {21}, None, key) is None           # already shown
+    assert heads_up_due(at(20, 52), {22}, None, None) is None          # not a risky hour
+    assert heads_up_due(at(20, 52), {21}, 10 * 60, None) is None       # just logged one
+    assert heads_up_due(at(23, 55), {0}, None, None) == "2026-10-11 00"  # across midnight
+
+
+def test_risky_hours_need_a_real_pattern(tmp_path):
+    stamps = [NOW.replace(hour=21) - timedelta(days=d) for d in range(1, 6)]  # 9 PM five times
+    stamps += [NOW.replace(hour=h) - timedelta(days=2) for h in (8, 13)]
+    log = make_log(tmp_path, stamps)
+    assert log.risky_hours() == {21}
+    assert make_log(tmp_path, stamps[:3]).risky_hours() == set()       # three isn't a pattern yet
+
+
+def test_week_review(tmp_path):
+    # NOW is Saturday 10 Oct; last week = Mon 28 Sep .. Sun 4 Oct
+    last_week = [datetime(2026, 9, 28, 21), datetime(2026, 9, 29, 21), datetime(2026, 10, 1, 9)]
+    week_before = [datetime(2026, 9, 22, 20)] * 5
+    log = make_log(tmp_path, last_week + week_before)
+    log.record_triggers(log.events[0], ["Bored"])
+    r = log.week_review()
+    assert (r["total"], r["previous"]) == (3, 5)
+    assert r["hardest_hour"] == 21
+    assert r["top_trigger"] == "Bored"
+    assert r["quietest_day"] == 6  # Sunday: zero, latest of the ties
+    assert make_log(tmp_path, []).week_review() is None

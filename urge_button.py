@@ -3,9 +3,10 @@
 A small floating button sits on the desktop (or press Ctrl+Alt+U from anywhere).
 Pressing it covers every monitor with a lock screen for the configured number of
 minutes (default 3), blocks the Windows key / Alt+Tab / Alt+F4 while it is up,
-logs the urge, and offers four things to do instead: go for a walk, put on
-Spotify, play Sudoku, or reach out to a friend. When the timer ends you rate how
-strong the urge was.
+logs the urge, shows your own reasons, and offers five things to do instead:
+breathe, go for a walk, put on Spotify, play Sudoku, or reach out to a friend.
+You rate the urge when it hits and again when the timer ends, and note what set
+it off. Just before an hour that's usually hard, a heads-up appears by the button.
 
 Right-click the button for Progress, logging an urge you handled without the
 lock, Settings and Quit. Data lives in %APPDATA%\\UrgeButton.
@@ -18,9 +19,11 @@ deliberate hard exit. The lock always ends on its own when the timer runs out.
     python urge_button.py --preview DIR STAGE    screenshot a screen without locking
 """
 
+import math
 import os
 import random
 import sys
+import time
 import tkinter as tk
 from pathlib import Path
 
@@ -32,8 +35,8 @@ from sudoku import check as check_sudoku
 from sudoku import make_puzzle
 from theme import ACCENT, BAD, BG, FONT, GOOD, MUTED, PANEL, PANEL_HI, TEXT, button, px
 from urge_log import (
-    CONFIG_PATH, MAX_LOCK_MINUTES, OPTIONS, TRIGGERS, EventLog, clamp_minutes, format_gap, load_config,
-    save_json, to_spotify_uri,
+    CONFIG_PATH, MAX_LOCK_MINUTES, OPTIONS, TRIGGERS, EventLog, clamp_minutes, format_gap, heads_up_due,
+    hour_name, load_config, save_json, to_spotify_uri,
 )
 
 FRIEND_PROMPTS = [
@@ -298,6 +301,42 @@ class LockScreen:
         self.app.log.record_choice(self.event, key)
         getattr(self, f"show_{key}")()
 
+    def show_breathe(self):
+        """A circle that grows as you breathe in (4 s), holds (4 s), and shrinks as you breathe out (6 s)."""
+        self.clear_stage()
+        self.heading("Breathe with me")
+        size = px(320)
+        c = tk.Canvas(self.stage, width=size, height=size, bg=BG, highlightthickness=0)
+        c.pack(pady=(px(6), 0))
+        note = tk.Label(self.stage, text="", font=(FONT, 12), fg=MUTED, bg=BG)
+        note.pack()
+        mid, rmin, rmax = size / 2, size * 0.2, size * 0.47
+        c.create_oval(mid - rmax, mid - rmax, mid + rmax, mid + rmax, outline=PANEL_HI, width=2)
+        circle = c.create_oval(0, 0, 0, 0, fill=ACCENT, outline="")
+        label = c.create_text(mid, mid, text="", fill=TEXT, font=(FONT, 17, "bold"))
+        phases = (("Breathe in", 4.0, 0.0, 1.0), ("Hold", 4.0, 1.0, 1.0), ("Breathe out", 6.0, 1.0, 0.0))
+        cycle = sum(p[1] for p in phases)
+        start = time.monotonic()
+
+        def frame():
+            if not c.winfo_exists():
+                return
+            n, t = divmod(time.monotonic() - start, cycle)
+            for name, dur, a, b in phases:
+                if t < dur:
+                    ease = (1 - math.cos(math.pi * t / dur)) / 2
+                    v = a + (b - a) * ease
+                    break
+                t -= dur
+            r = rmin + (rmax - rmin) * v
+            c.coords(circle, mid - r, mid - r, mid + r, mid + r)
+            c.itemconfig(label, text=name)
+            note.config(text=f"Breath {int(n) + 1}. Keep going until the timer ends, or as long as it helps.")
+            c.after(33, frame)
+
+        frame()
+        self.back_row()
+
     def show_walk(self):
         self.clear_stage()
         self.heading("Go for a walk")
@@ -410,6 +449,49 @@ def small_window(app, title):
     return w
 
 
+class HeadsUp:
+    """A small note beside the button just before an hour that's usually hard."""
+
+    def __init__(self, app, hour):
+        self.app = app
+        w = self.win = tk.Toplevel(app.root, bg=ACCENT)
+        w.overrideredirect(True)
+        w.attributes("-topmost", True)
+        inner = tk.Frame(w, bg=PANEL, padx=px(16), pady=px(12))
+        inner.pack(padx=2, pady=2)
+        tk.Label(inner, text="Heads up", font=(FONT, 12, "bold"), fg=TEXT, bg=PANEL, anchor="w").pack(fill="x")
+        tk.Label(inner, text=f"{hour_name(hour)} is usually one of your harder hours.\n"
+                             "Have a plan ready: a walk, some music, or a text to someone.",
+                 font=(FONT, 10), fg=MUTED, bg=PANEL, justify="left", anchor="w").pack(fill="x", pady=(4, 10))
+        bar = tk.Frame(inner, bg=PANEL)
+        bar.pack(fill="x")
+        button(bar, "Got it", self.close, size=10).pack(side="right")
+        button(bar, "Lock now", self.lock_now, primary=True, size=10).pack(side="right", padx=6)
+        self.place()
+        w.after(120_000, self.close)
+
+    def place(self):
+        w, root = self.win, self.app.root
+        w.update_idletasks()
+        ww, wh = w.winfo_reqwidth(), w.winfo_reqheight()
+        bx, by, bw, bh = root.winfo_x(), root.winfo_y(), root.winfo_width(), root.winfo_height()
+        mons = winapi.monitors()
+        mon = next((m for m in mons if m.contains(bx + bw // 2, by + bh // 2)), placement.find(mons, None))
+        x = max(mon.x + px(8), min(bx + bw - ww, mon.x + mon.w - ww - px(8)))
+        y = by - wh - px(8)
+        if y < mon.y:
+            y = by + bh + px(8)  # no room above: show it below
+        w.geometry(f"{x:+d}{y:+d}")
+
+    def lock_now(self):
+        self.close()
+        self.app.trigger()
+
+    def close(self):
+        if self.win.winfo_exists():
+            self.win.destroy()
+
+
 class LogOwnWindow:
     """Log an urge you rode out without locking the screen."""
 
@@ -458,6 +540,14 @@ class SettingsWindow:
         self.startup = tk.BooleanVar(value=winapi.starts_with_windows())
         tk.Checkbutton(left, text="Start with Windows", variable=self.startup, font=(FONT, 11), fg=TEXT, bg=BG,
                        selectcolor=PANEL, activebackground=BG, activeforeground=TEXT).pack(anchor="w", pady=(8, 0))
+        self.heads_up = tk.BooleanVar(value=app.config.get("heads_up", True))
+        tk.Checkbutton(left, text="Heads-up before my usual hard hours", variable=self.heads_up, font=(FONT, 11),
+                       fg=TEXT, bg=BG, selectcolor=PANEL, activebackground=BG,
+                       activeforeground=TEXT).pack(anchor="w", pady=(4, 0))
+        risky = sorted(app.log.risky_hours())
+        tk.Label(left, text=("Your hard hours right now: " + ", ".join(hour_name(h) for h in risky)) if risky
+                 else "Shows up once your history has a pattern.", font=(FONT, 10), fg=MUTED, bg=BG,
+                 anchor="w").pack(fill="x", padx=(px(22), 0))
         hotkey = "Ctrl+Alt+U also triggers the lock from anywhere." if app.hotkey_ok else \
             "Ctrl+Alt+U is taken by another app, so only the button works."
         tk.Label(left, text=hotkey, font=(FONT, 10), fg=MUTED, bg=BG, anchor="w").pack(fill="x", pady=(6, 0))
@@ -588,6 +678,7 @@ class SettingsWindow:
         cfg["friends"] = [f.strip() for f in self.friends.get("1.0", "end").splitlines() if f.strip()]
         cfg["reasons"] = [r.strip() for r in self.reasons.get("1.0", "end").splitlines() if r.strip()]
         cfg["reason_image"] = self.image.get().strip()
+        cfg["heads_up"] = bool(self.heads_up.get())
         self.app.save_config()
         if self.startup.get() != winapi.starts_with_windows():
             winapi.set_start_with_windows(self.startup.get())
@@ -605,6 +696,7 @@ class App:
         self.log = log or EventLog()
         self.lock = None
         self.settings = None
+        self.heads_up_key = None
 
         root = self.root = tk.Tk()
         theme.init_scale(root)
@@ -655,7 +747,17 @@ class App:
 
     def _tick_counts(self):
         self.refresh_counts()
+        self.check_heads_up()
         self.root.after(30_000, self._tick_counts)
+
+    def check_heads_up(self):
+        if not self.config.get("heads_up", True) or self.lock is not None:
+            return
+        now = self.log.now()
+        key = heads_up_due(now, self.log.risky_hours(), self.log.since_last(), self.heads_up_key)
+        if key:
+            self.heads_up_key = key
+            HeadsUp(self, int(key[-2:]))
 
     def refresh_counts(self):
         since = self.log.since_last()
@@ -761,6 +863,8 @@ def run_preview(out_dir, stage):
         target = SettingsWindow(app).win
     elif stage == "button":
         target = app.root
+    elif stage == "headsup":
+        target = HeadsUp(app, 21).win
     else:
         app.trigger(preview=True)
         target = app.lock.win

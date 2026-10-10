@@ -28,9 +28,34 @@ DEFAULT_CONFIG = {
     "lock_monitor": None,        # where the lock-screen message shows; None = the main monitor
     "reasons": [],               # your own lines, shown on the lock screen
     "reason_image": "",          # optional PNG/GIF shown above them
+    "heads_up": True,            # warn ~10 minutes before an hour that's usually hard
 }
 
+HEADS_UP_MINUTES = 10
+
+
+def hour_name(h):
+    return f"{h % 12 or 12} {'AM' if h < 12 else 'PM'}"
+
+
+def heads_up_due(now, risky, since_last, last_key):
+    """The key of a heads-up to show now, or None.
+
+    Fires in the last HEADS_UP_MINUTES before a risky hour starts, once per hour per day, and not
+    when an urge was logged in the last 30 minutes (you're already dealing with it).
+    """
+    if now.minute < 60 - HEADS_UP_MINUTES:
+        return None
+    upcoming = (now + timedelta(minutes=HEADS_UP_MINUTES)).replace(minute=0, second=0, microsecond=0)
+    if upcoming.hour not in risky:
+        return None
+    if since_last is not None and since_last < 30 * 60:
+        return None
+    key = f"{upcoming:%Y-%m-%d %H}"
+    return None if key == last_key else key
+
 OPTIONS = [
+    ("breathe", "Breathe with me", "One slow minute. Follow the circle."),
     ("walk", "Go for a walk", "Shoes on. Out the door."),
     ("spotify", "Play some music", "Opens Spotify and hits play."),
     ("sudoku", "Play Sudoku", "Give your hands something to do."),
@@ -273,6 +298,49 @@ class EventLog:
             for trig in e.get("triggers", []) or []:
                 counts[trig] = counts.get(trig, 0) + 1
         return sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+
+    def risky_hours(self, days=28):
+        """Hours of the day that stand out: at least 4 urges there in `days` days and twice the hourly average."""
+        since = self._since(days)
+        counts = [0] * 24
+        for t, _ in self.times():
+            if t >= since:
+                counts[t.hour] += 1
+        threshold = max(4, 2 * sum(counts) / 24)
+        return {h for h, n in enumerate(counts) if n >= threshold}
+
+    def week_review(self):
+        """Facts about last week (Monday to Sunday), or None when there's nothing to say yet."""
+        this_monday = self.week_start(self.now())
+        start, prev_start = this_monday - timedelta(days=7), this_monday - timedelta(days=14)
+        ts = self.times()
+        last = [(t, e) for t, e in ts if start <= t < this_monday]
+        prev = [t for t, _ in ts if prev_start <= t < start]
+        if not last and not prev:
+            return None
+        per_day = [0] * 7
+        hours = [0] * 24
+        triggers = {}
+        for t, e in last:
+            per_day[t.weekday()] += 1
+            hours[t.hour] += 1
+            for trig in e.get("triggers", []) or []:
+                triggers[trig] = triggers.get(trig, 0) + 1
+        # "calmer days": below your usual daily rate over the four weeks before last week
+        base = [t for t, _ in ts if start - timedelta(days=28) <= t < start]
+        usual = len(base) / 28 if base else None
+        relief = {k: v for k, v in self.relief_by_choice(28).items() if v[1] >= 2 and k in OPTION_NAMES}
+        best = max(relief.items(), key=lambda kv: kv[1][0]) if relief else None
+        return {
+            "total": len(last),
+            "previous": len(prev),
+            "calm_days": sum(1 for n in per_day if n < usual) if usual is not None else None,
+            "usual": usual,
+            "quietest_day": min(range(7), key=lambda d: (per_day[d], -d)),
+            "hardest_hour": max(range(24), key=lambda h: hours[h]) if any(hours) else None,
+            "top_trigger": max(triggers.items(), key=lambda kv: kv[1])[0] if triggers else None,
+            "best_option": (best[0], best[1][0]) if best and best[1][0] > 0 else None,
+        }
 
     def choice_counts(self, days=None):
         since = None if days is None else start_of_day(self.now()) - timedelta(days=days - 1)
