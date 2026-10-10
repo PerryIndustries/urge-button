@@ -1,9 +1,10 @@
 // Offline support: serve the app from cache, refresh the cache from the network when online.
-const CACHE = "urge-v1";
+const CACHE = "urge-v2";
 const FILES = ["./", "./index.html", "./manifest.webmanifest", "./icon-192.png", "./icon-512.png", "./apple-touch-icon.png"];
 
 self.addEventListener("install", (e) => {
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(FILES)).then(() => self.skipWaiting()));
+  // one at a time, so a single failed file never stops the app working offline
+  e.waitUntil(caches.open(CACHE).then((c) => Promise.all(FILES.map((f) => c.add(f).catch(() => {})))).then(() => self.skipWaiting()));
 });
 
 self.addEventListener("activate", (e) => {

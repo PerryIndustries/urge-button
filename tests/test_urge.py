@@ -161,3 +161,46 @@ def test_week_review(tmp_path):
     assert r["top_trigger"] == "Bored"
     assert r["quietest_day"] == 6  # Sunday: zero, latest of the ties
     assert make_log(tmp_path, []).week_review() is None
+
+
+def test_calmer_days_count_days_below_your_own_average(tmp_path):
+    # 30-day window ending today (Sat 10 Oct): 3 urges on each of 5 busy days, 15 total -> average 0.5/day
+    busy = [NOW - timedelta(days=d) for d in (20, 21, 22, 23, 24) for _ in range(3)]
+    log = make_log(tmp_path, busy)
+    r = log.calmer_days(30)
+    assert r["calm"] == 25 and r["of"] == 30
+    assert r["run"] == 20 and r["best_run"] == 20
+    assert make_log(tmp_path, []).calmer_days(30) is None
+
+
+def test_sync_merge_keeps_the_latest_edit_and_every_event():
+    import sync
+    a = {"id": "a", "t": 1, "u": 5, "intensity": 2}
+    a_newer = {"id": "a", "t": 1, "u": 9, "intensity": 4}
+    b = {"id": "b", "t": 2, "u": 1}
+    merged = sync.merge([a, b], [a_newer])
+    assert merged == [a_newer, b]
+    assert sync.merge(merged, merged) == merged  # repeating a sync changes nothing
+
+
+def test_pc_events_round_trip_through_the_shared_format(tmp_path):
+    import sync
+    log = EventLog(tmp_path / "events.json", now=lambda: NOW)
+    e = log.record_press(3)
+    log.record_choice(e, "walk")
+    shared = log.shared()
+    assert shared[0]["t"] == int(NOW.timestamp() * 1000) and shared[0]["choices"] == ["walk"]
+    other = EventLog(tmp_path / "other.json", now=lambda: NOW)
+    phone = dict(shared[0], id="phone1", u=shared[0]["u"] + 1, triggers=["Bored"])
+    assert other.apply_shared(sync.merge(shared, [phone]))
+    assert {x["id"] for x in other.events} == {e["id"], "phone1"}
+    assert sync.from_shared(phone)["ts"] == NOW.isoformat(timespec="seconds")
+
+
+def test_blocker_never_closes_protected_apps():
+    from blocker import AppBlocker
+    b = AppBlocker()
+    b.start(["Steam", "explorer.exe", "chrome.exe"], 60)
+    assert b.names == ["steam.exe", "chrome.exe"] and b.active()
+    b.stop()
+    assert not b.active()

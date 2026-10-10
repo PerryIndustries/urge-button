@@ -174,7 +174,7 @@ nav.bar button[aria-current=true] { color: var(--text); background: var(--panel)
   </section>
 
   <section class="tab" id="tab-progress" hidden>
-    <div><h2>Your progress</h2><p class="sub">Fewer, weaker and further apart is the trend you're after. Tap any bar for its number.</p></div>
+    <div><h2>Your progress</h2><p class="sub" id="progIntro">Fewer, weaker and further apart is the trend you're after. Tap any bar for its number.</p></div>
     <div class="tiles" id="progTiles"></div>
     <div class="card" id="reviewCard" hidden><h3>Last week in review</h3><ul class="review" id="review"></ul></div>
     <div class="card"><div><h3>Today, hour by hour</h3><p class="sub" id="todaySub"></p></div><div id="todayChart"></div></div>
@@ -204,9 +204,22 @@ nav.bar button[aria-current=true] { color: var(--text); background: var(--panel)
     </label>
     <label class="row" for="setHeadsUp" style="gap:10px;font-size:14px"><input type="checkbox" id="setHeadsUp" style="width:20px;height:20px;accent-color:var(--accent)"> Show a heads-up during my usual hard hours</label>
     <p class="note" id="riskyNote"></p>
-    <div class="row"><button class="btn primary" id="saveSettings">Save</button><span class="note" id="savedNote"></span></div>
+    <label class="f" for="setPlan">Your plan for a hard hour (shown in the heads-up)
+      <input type="text" id="setPlan" placeholder="Phone in the other room, make tea, walk round the block" autocomplete="off">
+    </label>
+    <div class="card">
+      <div><h3>Sync with your PC</h3><p class="sub">One history on both. It's kept in your private GitHub repo.</p></div>
+      <label class="f" for="setSyncRepo">Private repo
+        <input type="text" id="setSyncRepo" placeholder="PerryIndustries/urge-data" autocomplete="off" autocapitalize="off">
+      </label>
+      <label class="f" for="setSyncToken">GitHub token (needs read and write access to that repo's contents)
+        <input type="password" id="setSyncToken" autocomplete="off" autocapitalize="off">
+      </label>
+      <div class="row"><button class="btn" id="syncNowBtn">Sync now</button><span class="note" id="syncStatus"></span></div>
+    </div>
     <p class="note">Add this page to your home screen so it opens like an app. In Safari, tap Share and then Add to Home Screen. In Chrome, open the menu and tap Add to Home screen.</p>
     <p class="note">A phone app can't lock the whole phone. If you leave during a lock, the timer keeps running, and the lock is still here when you come back. For a harder lock on iPhone, turn on Guided Access (Settings, then Accessibility).</p>
+    <div class="row"><button class="btn primary" id="saveSettings">Save</button><span class="note" id="savedNote"></span></div>
   </section>
 </div>
 
@@ -288,9 +301,10 @@ nav.bar button[aria-current=true] { color: var(--text); background: var(--panel)
       .catch(() => setSync("Saved on this phone only", true));
   }
   function addEvent(ev) {
+    ev.u = Date.now();
     const k = monthKey(ev.t);
     S.months[k] = (S.months[k] || []).concat([ev]);
-    persistMonth(k); render();
+    persistMonth(k); render(); scheduleSync(3000);
   }
   function updateEvent(id, fn) {
     for (const k of Object.keys(S.months)) {
@@ -298,7 +312,8 @@ nav.bar button[aria-current=true] { color: var(--text); background: var(--panel)
       if (i >= 0) {
         const copy = S.months[k].slice();
         copy[i] = fn(JSON.parse(JSON.stringify(copy[i])));
-        S.months[k] = copy; persistMonth(k); render(); return;
+        copy[i].u = Date.now();
+        S.months[k] = copy; persistMonth(k); render(); scheduleSync(3000); return;
       }
     }
   }
@@ -333,6 +348,89 @@ nav.bar button[aria-current=true] { color: var(--text); background: var(--panel)
   }
 
   // ---------------------------------------------------------------- stats
+  // ---------------------------------------------------------------- sync with the PC (private GitHub repo)
+  const DEFAULT_REPO = "PerryIndustries/urge-data";
+  let syncing = false, syncAgain = false, syncTimer = null, syncStatus = "";
+  function mergeEvents(...lists) {
+    const best = new Map();
+    lists.forEach((list) => (list || []).forEach((e) => {
+      if (!e || !e.id) return;
+      const cur = best.get(e.id);
+      if (!cur || (e.u || 0) > (cur.u || 0)) best.set(e.id, e);
+    }));
+    return [...best.values()].sort((a, b) => (a.t || 0) - (b.t || 0));
+  }
+  function b64encode(str) {
+    const bytes = new TextEncoder().encode(str);
+    let bin = "";
+    for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+    return btoa(bin);
+  }
+  function b64decode(b64) {
+    const bin = atob((b64 || "").replace(/\s/g, ""));
+    return new TextDecoder().decode(Uint8Array.from(bin, (c) => c.charCodeAt(0)));
+  }
+  function setSyncStatus(text, bad) {
+    syncStatus = text;
+    const el = $("syncStatus");
+    if (el) { el.textContent = text; el.style.color = bad ? "var(--bad)" : ""; }
+    setSync(bad ? "Not synced" : S.settings.syncToken ? "Synced with your PC" : "Saved on this phone", bad);
+  }
+  function scheduleSync(ms) {
+    if (!S.settings.syncToken) return;
+    clearTimeout(syncTimer);
+    syncTimer = setTimeout(syncNow, ms);
+  }
+  function applyMerged(list) {
+    const months = {};
+    mergeEvents(list, events()).forEach((e) => { const k = monthKey(e.t); (months[k] = months[k] || []).push(e); });
+    S.months = months;
+    ls.set("urge.months", S.months);
+    render();
+  }
+  async function syncNow() {
+    const token = (S.settings.syncToken || "").trim(), repo = (S.settings.syncRepo || DEFAULT_REPO).trim();
+    if (!token) { setSyncStatus("Add a GitHub token below to share one history with your PC."); return; }
+    if (syncing) { syncAgain = true; return; }
+    syncing = true;
+    const url = "https://api.github.com/repos/" + repo + "/contents/events.json";
+    const headers = { Authorization: "Bearer " + token, Accept: "application/vnd.github+json" };
+    try {
+      let done = false;
+      for (let attempt = 0; attempt < 3 && !done; attempt++) {
+        const r = await fetch(url, { headers, cache: "no-store" });
+        let remote = [], sha;
+        if (r.status === 200) {
+          const body = await r.json();
+          sha = body.sha;
+          remote = (JSON.parse(b64decode(body.content) || "{}").events) || [];
+        } else if (r.status === 401 || r.status === 403) {
+          throw new Error("GitHub refused the token. Check it can read and write " + repo + ".");
+        } else if (r.status !== 404) {
+          throw new Error("GitHub said " + r.status);
+        }
+        const theirs = mergeEvents(remote), merged = mergeEvents(remote, events());
+        const same = merged.length === theirs.length && merged.every((e, i) => e === theirs[i]);
+        if (!same) {
+          const body = { message: "sync", content: b64encode(JSON.stringify({ version: 1, events: merged })) };
+          if (sha) body.sha = sha;
+          const put = await fetch(url, { method: "PUT", headers, body: JSON.stringify(body) });
+          if (put.status === 409 || put.status === 422) continue;   // the PC wrote first: read again
+          if (!put.ok) throw new Error("GitHub said " + put.status + " when saving");
+        }
+        applyMerged(merged);
+        done = true;
+      }
+      if (!done) throw new Error("the data kept changing; will try again shortly");
+      setSyncStatus("Synced at " + new Date().toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }));
+    } catch (e) {
+      setSyncStatus("Sync problem: " + (e && e.message && !/fetch/i.test(e.message) ? e.message : "can't reach GitHub right now"), true);
+    }
+    syncing = false;
+    if (syncAgain) { syncAgain = false; scheduleSync(500); }
+  }
+
+  // ---------------------------------------------------------------- counts and chart data
   const events = () => Object.values(S.months).flat().filter((e) => e && typeof e.t === "number").sort((a, b) => a.t - b.t);
   const sod = (t) => { const d = new Date(t); return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime(); };
   const sow = (t) => { const d = new Date(sod(t)); return d.getTime() - ((d.getDay() + 6) % 7) * DAY; };
@@ -405,7 +503,18 @@ nav.bar button[aria-current=true] { color: var(--text); background: var(--panel)
         best: best && best[1][0] > 0 ? [best[0], best[1][0]] : null,
       };
     }
-    return { ev, now, today, yday, week, lastWeek, last, longest, perDay, byHour, heat, strength, choices, locks, relief, triggers, risky, review };
+    const d30c = perDay(30), avg30 = d30c.reduce((a, b) => a + b.n, 0) / 30;
+    let calmer = null;
+    if (avg30 > 0) {
+      const calm = d30c.map((p) => p.n < avg30);
+      let best = 0, run = 0;
+      calm.forEach((c) => { run = c ? run + 1 : 0; best = Math.max(best, run); });
+      let cur = 0;
+      for (let i = calm.length - 2; i >= 0 && calm[i]; i--) cur++;
+      if (calm[calm.length - 1]) cur++;
+      calmer = { calm: calm.filter(Boolean).length, run: cur, best };
+    }
+    return { ev, now, today, yday, week, lastWeek, last, longest, perDay, byHour, heat, strength, choices, locks, relief, triggers, risky, review, calmer };
   }
   function delta(a, b, unit) {
     const d = a - b;
@@ -515,7 +624,7 @@ nav.bar button[aria-current=true] { color: var(--text); background: var(--panel)
     const hour = s.risky.has(h) ? h : soon ? next : null;
     const on = S.settings.headsUp !== false && hour != null && !(s.last && s.now - s.last < 30 * 60000);
     $("banner").hidden = !on;
-    if (on) $("banner").innerHTML = `<b>Heads up</b><span>${hourName(hour)} is usually one of your harder hours. Have a plan ready: a walk, some music, or a text to someone.</span>`;
+    if (on) $("banner").innerHTML = `<b>Heads up</b><span>${hourName(hour)} is usually one of your harder hours.</span>${(S.settings.plan || "").trim() ? `<span style="color:var(--text);font-weight:600">Your plan: ${esc(S.settings.plan.trim())}</span>` : `<span>Have a plan ready: a walk, some music, or a text to someone.</span>`}`;
   }
   function renderReview(r) {
     $("reviewCard").hidden = !r;
@@ -562,7 +671,10 @@ nav.bar button[aria-current=true] { color: var(--text); background: var(--panel)
       tileHTML("Today", s.today, td, tc) + tileHTML("This week", s.week, wd, wc) +
       tileHTML("Since your last urge", since, s.last ? "last one " + fmtDay(s.last) + ", " + fmtTime(s.last) : "nothing logged yet") +
       tileHTML("Longest stretch", s.longest == null ? "-" : gap(s.longest), onIt ? "you're on it right now" : (s.last ? "current " + since : ""), onIt ? "good" : "") +
-      tileHTML("All time", s.ev.length, s.locks + " locked, " + (s.ev.length - s.locks) + " on your own");
+      (s.calmer ? tileHTML("Calmer days, last 30", s.calmer.calm + " of 30",
+          s.calmer.run ? plural(s.calmer.run, "day") + " in a row now, best " + s.calmer.best : "best run " + plural(s.calmer.best, "day"), s.calmer.run >= 2 ? "good" : "")
+        : tileHTML("Calmer days, last 30", "-", "days below your own average"));
+    $("progIntro").textContent = plural(s.ev.length, "urge") + " logged in all (" + s.locks + " with the lock, " + (s.ev.length - s.locks) + " on your own). Fewer, weaker and further apart is the trend you're after. Tap any bar for its number.";
 
     const w7 = s.perDay(7);
     $("weekSub").textContent = plural(w7.reduce((a, b) => a + b.n, 0), "urge") + " this past week";
@@ -820,6 +932,9 @@ nav.bar button[aria-current=true] { color: var(--text); background: var(--panel)
     $("setSpotify").value = S.settings.spotify || "";
     $("setReasons").value = (S.settings.reasons || []).join("\n");
     $("setHeadsUp").checked = S.settings.headsUp !== false;
+    $("setPlan").value = S.settings.plan || "";
+    $("setSyncRepo").value = S.settings.syncRepo || DEFAULT_REPO;
+    $("setSyncToken").value = S.settings.syncToken || "";
     $("photoPreview").src = S.settings.photo || "";
     $("photoPreview").hidden = $("clearPhoto").hidden = !S.settings.photo;
     $("setFriends").value = (S.settings.friends || []).join("\n");
@@ -828,7 +943,9 @@ nav.bar button[aria-current=true] { color: var(--text); background: var(--panel)
     const m = Math.max(1, Math.min(30, parseInt($("setMinutes").value, 10) || 3));
     const sp = $("setSpotify").value.trim();
     S.settings = { lockMinutes: m, spotify: sp, friends: $("setFriends").value.split("\n").map((x) => x.trim()).filter(Boolean),
-      reasons: $("setReasons").value.split("\n").map((x) => x.trim()).filter(Boolean), photo: S.settings.photo || "", headsUp: $("setHeadsUp").checked };
+      reasons: $("setReasons").value.split("\n").map((x) => x.trim()).filter(Boolean), photo: S.settings.photo || "", headsUp: $("setHeadsUp").checked,
+      plan: $("setPlan").value.trim(), syncRepo: $("setSyncRepo").value.trim() || DEFAULT_REPO, syncToken: $("setSyncToken").value.trim() };
+    scheduleSync(300);
     persistSettings(); fillSettings(); render();
     $("savedNote").textContent = sp && !/^https:\/\/open\.spotify\.com\//.test(sp) ? "Saved. That Spotify link doesn't look like an open.spotify.com link." : "Saved.";
   });
@@ -857,6 +974,10 @@ nav.bar button[aria-current=true] { color: var(--text); background: var(--panel)
   fillSettings(); render();
   if (active) showLock();
   setInterval(() => { if ($("lock").hidden) render(); }, 30000);
+  $("syncNowBtn").addEventListener("click", () => { setSyncStatus("Syncing..."); syncNow(); });
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) scheduleSync(300); });
+  setInterval(() => scheduleSync(0), 5 * 60000);
+  if (S.settings.syncToken) scheduleSync(600); else setSyncStatus("Add a GitHub token below to share one history with your PC.");
   connect();
 })();
 </script>

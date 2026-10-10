@@ -8,6 +8,8 @@ Every urge is one event in events.json:
 
 import json
 import os
+import time
+import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -29,6 +31,12 @@ DEFAULT_CONFIG = {
     "reasons": [],               # your own lines, shown on the lock screen
     "reason_image": "",          # optional PNG/GIF shown above them
     "heads_up": True,            # warn ~10 minutes before an hour that's usually hard
+    "plan": "",                  # what you'll do when a hard hour comes; shown in the heads-up
+    "block_apps": [],            # exe names closed during a lock and the cooldown after it
+    "block_minutes": 30,         # cooldown after a lock ends
+    "sync_repo": "PerryIndustries/urge-data",
+    "sync_token": "",            # blank = use this computer's GitHub CLI login
+    "sync": True,
 }
 
 HEADS_UP_MINUTES = 10
@@ -141,12 +149,28 @@ class EventLog:
     def __init__(self, path=EVENTS_PATH, now=datetime.now):
         self.path = Path(path)
         self.now = now
+        self.on_change = None  # called after every local change (the app uses it to sync)
         self.events = load_json(self.path, [])
+        if any("id" not in e for e in self.events):  # ids came in with sync; give older events one
+            for e in self.events:
+                e.setdefault("id", uuid.uuid4().hex)
+                e.setdefault("u", 0)
+            save_json(self.path, self.events)
 
     # -- writing
 
+    def _stamp(self, event):
+        event["u"] = int(time.time() * 1000)
+
+    def _changed(self, event):
+        self._stamp(event)
+        self.save()
+        if self.on_change:
+            self.on_change()
+
     def _add(self, kind, minutes, intensity_start=None, triggers=None):
         event = {
+            "id": uuid.uuid4().hex,
             "ts": self.now().isoformat(timespec="seconds"),
             "kind": kind,
             "minutes": minutes,
@@ -156,7 +180,7 @@ class EventLog:
             "triggers": list(triggers or []),
         }
         self.events.append(event)
-        self.save()
+        self._changed(event)
         return event
 
     def record_press(self, minutes):
@@ -167,23 +191,48 @@ class EventLog:
 
     def record_start_intensity(self, event, intensity):
         event["intensity_start"] = int(intensity)
-        self.save()
+        self._changed(event)
 
     def record_triggers(self, event, triggers):
         event["triggers"] = list(triggers)
-        self.save()
+        self._changed(event)
 
     def record_choice(self, event, choice):
         if choice not in event["choices"]:
             event["choices"].append(choice)
-            self.save()
+            self._changed(event)
 
     def record_intensity(self, event, intensity):
         event["intensity"] = int(intensity)
-        self.save()
+        self._changed(event)
 
     def save(self):
         save_json(self.path, self.events)
+
+    # -- sync
+
+    def shared(self):
+        from sync import to_shared
+        return [to_shared(e) for e in self.events if e.get("id") and e.get("ts")]
+
+    def apply_shared(self, merged):
+        """Take in a merged list from sync, updating events in place (open screens keep their references)."""
+        from sync import from_shared
+        mine = {e.get("id"): e for e in self.events}
+        changed = False
+        for s in merged:
+            cur = mine.get(s["id"])
+            if cur is None:
+                self.events.append(from_shared(s))
+                changed = True
+            elif s.get("u", 0) > cur.get("u", 0):
+                cur.clear()
+                cur.update(from_shared(s))
+                changed = True
+        if changed:
+            self.events.sort(key=lambda e: e.get("ts", ""))
+            self.save()
+        return changed
 
     # -- reading
 
@@ -298,6 +347,32 @@ class EventLog:
             for trig in e.get("triggers", []) or []:
                 counts[trig] = counts.get(trig, 0) + 1
         return sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+
+    def calmer_days(self, days=30):
+        """Days below your own daily average over the window - progress that one bad day can't erase.
+
+        Returns {"calm": n, "of": days, "run": current run of calm days ending yesterday or today,
+        "best_run": longest run in the window}, or None with no history.
+        """
+        per_day = self.per_day(days)
+        total = sum(n for _, n in per_day)
+        if not total:
+            return None
+        avg = total / days
+        calm = [n < avg for _, n in per_day]
+        best = run = 0
+        for c in calm:
+            run = run + 1 if c else 0
+            best = max(best, run)
+        # today isn't over: a calm-so-far today extends the run, a busy today doesn't break it yet
+        current = 0
+        for c in reversed(calm[:-1]):
+            if not c:
+                break
+            current += 1
+        if calm[-1]:
+            current += 1
+        return {"calm": sum(calm), "of": days, "run": current, "best_run": best}
 
     def risky_hours(self, days=28):
         """Hours of the day that stand out: at least 4 urges there in `days` days and twice the hourly average."""

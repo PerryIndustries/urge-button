@@ -114,10 +114,7 @@ rep("""    if (!S.db) return;
 """, "")
 
 # Boot: backup/restore, ?start, offline.
-rep("""  setInterval(() => { if ($("lock").hidden) render(); }, 30000);
-  connect();""", """  setInterval(() => { if ($("lock").hidden) render(); }, 30000);
-
-  function backupSub() { $("backupSub").textContent = plural(events().length, "urge") + " saved on this phone"; }
+rep("""  connect();""", """  function backupSub() { $("backupSub").textContent = plural(events().length, "urge") + " saved on this phone"; }
   $("exportBtn").addEventListener("click", () => {
     const body = JSON.stringify({ app: "urge-button", version: 1, months: S.months, settings: S.settings }, null, 2);
     $("exportBtn").href = URL.createObjectURL(new Blob([body], { type: "application/json" }));

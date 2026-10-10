@@ -268,11 +268,13 @@ class ProgressWindow:
         log = self.log
         now = log.now()
 
+        locks = sum(1 for e in log.events if e.get("kind", "lock") == "lock")
         head = tk.Frame(self.win, bg=BG)
         head.pack(fill="x")
         tk.Label(head, text="Your progress", font=(FONT, 20, "bold"), fg=TEXT, bg=BG).pack(side="left")
         button(head, "Close", self.win.destroy).pack(side="right")
-        tk.Label(self.win, text="Every urge you've logged. Fewer, weaker and further apart is the trend you're after.",
+        tk.Label(self.win, text=f"{plural(len(log.events), 'urge')} logged in all ({locks} with the lock, "
+                                f"{len(log.events) - locks} on your own). Fewer, weaker and further apart is the trend you're after.",
                  font=(FONT, 10), fg=MUTED, bg=BG, anchor="w").pack(fill="x", pady=(px(2), px(12)))
 
         tiles = tk.Frame(self.win, bg=BG)
@@ -290,8 +292,14 @@ class ProgressWindow:
         self.tile(tiles, "Longest stretch", format_gap(longest) if longest is not None else "-",
                   "you're on it right now" if on_it else (f"current: {format_gap(since)}" if since else ""),
                   GOOD if on_it else MUTED)
-        locks = sum(1 for e in log.events if e.get("kind", "lock") == "lock")
-        self.tile(tiles, "All time", str(len(log.events)), f"{locks} locked  ·  {len(log.events) - locks} on your own")
+        calm = log.calmer_days(30)
+        if calm:
+            run = calm["run"]
+            self.tile(tiles, "Calmer days, last 30", f"{calm['calm']} of {calm['of']}",
+                      f"{plural(run, 'day')} in a row now · best {calm['best_run']}" if run else
+                      f"best run {plural(calm['best_run'], 'day')}", GOOD if run >= 2 else MUTED)
+        else:
+            self.tile(tiles, "Calmer days, last 30", "-", "days below your own average")
 
         self.review(log.week_review())
 

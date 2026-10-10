@@ -21,13 +21,18 @@ deliberate hard exit. The lock always ends on its own when the timer runs out.
 
 import math
 import os
+import queue
 import random
 import sys
+import threading
 import time
 import tkinter as tk
+from datetime import datetime
 from pathlib import Path
 
 import placement
+import sync
+from blocker import AppBlocker, running_apps
 import theme
 import winapi
 from progress import ProgressWindow, fake_log
@@ -460,9 +465,13 @@ class HeadsUp:
         inner = tk.Frame(w, bg=PANEL, padx=px(16), pady=px(12))
         inner.pack(padx=2, pady=2)
         tk.Label(inner, text="Heads up", font=(FONT, 12, "bold"), fg=TEXT, bg=PANEL, anchor="w").pack(fill="x")
-        tk.Label(inner, text=f"{hour_name(hour)} is usually one of your harder hours.\n"
-                             "Have a plan ready: a walk, some music, or a text to someone.",
-                 font=(FONT, 10), fg=MUTED, bg=PANEL, justify="left", anchor="w").pack(fill="x", pady=(4, 10))
+        tk.Label(inner, text=f"{hour_name(hour)} is usually one of your harder hours.",
+                 font=(FONT, 10), fg=MUTED, bg=PANEL, justify="left", anchor="w").pack(fill="x", pady=(4, 0))
+        plan = (app.config.get("plan") or "").strip()
+        tk.Label(inner, text=f"Your plan: {plan}" if plan else
+                 "Have a plan ready: a walk, some music, or a text to someone.",
+                 font=(FONT, 11, "bold") if plan else (FONT, 10), fg=TEXT if plan else MUTED, bg=PANEL,
+                 justify="left", anchor="w", wraplength=px(360)).pack(fill="x", pady=(4, 10))
         bar = tk.Frame(inner, bg=PANEL)
         bar.pack(fill="x")
         button(bar, "Got it", self.close, size=10).pack(side="right")
@@ -529,7 +538,9 @@ class SettingsWindow:
         left = tk.Frame(cols, bg=BG)
         left.pack(side="left", anchor="n", padx=(0, px(28)))
         right = tk.Frame(cols, bg=BG)
-        right.pack(side="left", anchor="n")
+        right.pack(side="left", anchor="n", padx=(0, px(28)))
+        third = tk.Frame(cols, bg=BG)
+        third.pack(side="left", anchor="n")
 
         def label(parent, text, top=10):
             tk.Label(parent, text=text, font=(FONT, 11), fg=MUTED, bg=BG, anchor="w").pack(fill="x", pady=(top, 2))
@@ -548,6 +559,12 @@ class SettingsWindow:
         tk.Label(left, text=("Your hard hours right now: " + ", ".join(hour_name(h) for h in risky)) if risky
                  else "Shows up once your history has a pattern.", font=(FONT, 10), fg=MUTED, bg=BG,
                  anchor="w").pack(fill="x", padx=(px(22), 0))
+        label(left, "Your plan for a hard hour (shown in the heads-up)")
+        self.plan = tk.Entry(left, width=44, font=(FONT, 11), **FIELD)
+        self.plan.insert(0, app.config.get("plan", ""))
+        self.plan.pack(anchor="w", ipady=3)
+        tk.Label(left, text="e.g. Phone in the other room, make tea, walk round the block.", font=(FONT, 9),
+                 fg=MUTED, bg=BG, anchor="w").pack(fill="x")
         hotkey = "Ctrl+Alt+U also triggers the lock from anywhere." if app.hotkey_ok else \
             "Ctrl+Alt+U is taken by another app, so only the button works."
         tk.Label(left, text=hotkey, font=(FONT, 10), fg=MUTED, bg=BG, anchor="w").pack(fill="x", pady=(6, 0))
@@ -586,10 +603,74 @@ class SettingsWindow:
         self.friends.insert("1.0", "\n".join(app.config.get("friends", [])))
         self.friends.pack(anchor="w")
 
+        # Third: blocking and sync
+        tk.Label(third, text="Block apps", font=(FONT, 13, "bold"), fg=TEXT, bg=BG, anchor="w").pack(fill="x")
+        label(third, "Close these during a lock and the cooldown (one per line)", top=6)
+        self.block = tk.Text(third, width=36, height=5, font=(FONT, 11), padx=6, pady=4, **FIELD)
+        self.block.insert("1.0", "\n".join(app.config.get("block_apps", [])))
+        self.block.pack(anchor="w")
+        pick = tk.Frame(third, bg=BG)
+        pick.pack(fill="x", pady=(6, 0))
+        self.running = tk.StringVar(value="Add a running app...")
+        apps = running_apps() or ["(no apps found)"]
+        menu = tk.OptionMenu(pick, self.running, *apps, command=self.add_block_app)
+        menu.config(font=(FONT, 10), bg=PANEL, fg=TEXT, activebackground=PANEL_HI, activeforeground=TEXT,
+                    highlightthickness=0, relief="flat", anchor="w", width=26)
+        menu["menu"].config(font=(FONT, 10), bg=PANEL, fg=TEXT, activebackground=ACCENT)
+        menu.pack(side="left")
+        row2 = tk.Frame(third, bg=BG)
+        row2.pack(fill="x", pady=(8, 0))
+        tk.Label(row2, text="Cooldown after the lock (minutes)", font=(FONT, 11), fg=MUTED, bg=BG).pack(side="left")
+        self.block_minutes = tk.Spinbox(row2, from_=0, to=240, width=5, font=(FONT, 11), **FIELD,
+                                        buttonbackground=PANEL_HI)
+        self.block_minutes.delete(0, "end")
+        self.block_minutes.insert(0, str(app.config.get("block_minutes", 30)))
+        self.block_minutes.pack(side="left", padx=(8, 0))
+        tk.Label(third, text="Your work stays open in everything else. Websites need an admin setup; ask for it.",
+                 font=(FONT, 9), fg=MUTED, bg=BG, anchor="w", wraplength=px(330), justify="left").pack(fill="x", pady=(4, 0))
+
+        tk.Frame(third, bg=PANEL_HI, height=1).pack(fill="x", pady=(16, 4))
+        tk.Label(third, text="Sync with your phone", font=(FONT, 13, "bold"), fg=TEXT, bg=BG, anchor="w").pack(fill="x")
+        self.sync_on = tk.BooleanVar(value=app.config.get("sync", True))
+        tk.Checkbutton(third, text="Keep one history on PC and phone", variable=self.sync_on, font=(FONT, 11),
+                       fg=TEXT, bg=BG, selectcolor=PANEL, activebackground=BG,
+                       activeforeground=TEXT).pack(anchor="w", pady=(4, 0))
+        label(third, "Private GitHub repo for your history")
+        self.sync_repo = tk.Entry(third, width=36, font=(FONT, 11), **FIELD)
+        self.sync_repo.insert(0, app.config.get("sync_repo") or sync.DEFAULT_REPO)
+        self.sync_repo.pack(anchor="w", ipady=3)
+        label(third, "GitHub token (blank uses this PC's GitHub login)")
+        self.sync_token = tk.Entry(third, width=36, font=(FONT, 11), show="•", **FIELD)
+        self.sync_token.insert(0, app.config.get("sync_token", ""))
+        self.sync_token.pack(anchor="w", ipady=3)
+        row3 = tk.Frame(third, bg=BG)
+        row3.pack(fill="x", pady=(8, 0))
+        self.sync_label = tk.Label(row3, text=app.sync_status, font=(FONT, 10), fg=MUTED, bg=BG, anchor="w",
+                                   wraplength=px(240), justify="left")
+        self.sync_label.pack(side="left", fill="x", expand=True)
+        button(row3, "Sync now", lambda: app.sync_now(), size=10).pack(side="right")
+        self._watch_sync()
+
         bar = tk.Frame(w, bg=BG)
         bar.pack(fill="x", pady=(16, 0))
         button(bar, "Save", self.save, primary=True).pack(side="right")
         button(bar, "Cancel", w.destroy).pack(side="right", padx=6)
+
+    def add_block_app(self, name):
+        if name.startswith("("):
+            return
+        have = [x.strip().lower() for x in self.block.get("1.0", "end").splitlines() if x.strip()]
+        if name.lower() not in have:
+            text = self.block.get("1.0", "end").strip()
+            self.block.delete("1.0", "end")
+            self.block.insert("1.0", (text + "\n" if text else "") + name)
+        self.running.set("Add a running app...")
+
+    def _watch_sync(self):
+        if self.win.winfo_exists():
+            self.sync_label.config(text=self.app.sync_status,
+                                   fg=BAD if self.app.sync_status.startswith("Sync problem") else MUTED)
+            self.win.after(1000, self._watch_sync)
 
     def choose_image(self):
         from tkinter import filedialog
@@ -679,6 +760,19 @@ class SettingsWindow:
         cfg["reasons"] = [r.strip() for r in self.reasons.get("1.0", "end").splitlines() if r.strip()]
         cfg["reason_image"] = self.image.get().strip()
         cfg["heads_up"] = bool(self.heads_up.get())
+        cfg["plan"] = self.plan.get().strip()
+        cfg["block_apps"] = [x.strip() for x in self.block.get("1.0", "end").splitlines() if x.strip()]
+        try:
+            cfg["block_minutes"] = max(0, min(240, int(self.block_minutes.get())))
+        except ValueError:
+            pass
+        sync_changed = (cfg.get("sync_repo"), cfg.get("sync_token"), cfg.get("sync")) != (
+            self.sync_repo.get().strip(), self.sync_token.get().strip(), bool(self.sync_on.get()))
+        cfg["sync_repo"] = self.sync_repo.get().strip() or sync.DEFAULT_REPO
+        cfg["sync_token"] = self.sync_token.get().strip()
+        cfg["sync"] = bool(self.sync_on.get())
+        if sync_changed:
+            self.app.schedule_sync(500)
         self.app.save_config()
         if self.startup.get() != winapi.starts_with_windows():
             winapi.set_start_with_windows(self.startup.get())
@@ -736,13 +830,85 @@ class App:
 
         self.hotkey = winapi.Hotkey()
         self.hotkey_ok = self.hotkey.start() if hotkey else False
+
+        # Closing chosen apps during a lock and the cooldown after it
+        self.app_blocker = AppBlocker()
+        self._block_loop()
+
+        # Sync with the phone through the private data repo
+        self.online = hotkey  # previews run offline
+        self.sync_status = "Not synced yet"
+        self._sync_job = None
+        self._syncing = False
+        self._sync_again = False
+        self._sync_results = queue.Queue()
+        self.log.on_change = lambda: self.schedule_sync(3000)
+        if self.online:
+            self.schedule_sync(1500)
+            self._sync_every()
+
         self._poll_hotkey()
         self._tick_counts()
+
+    # -- blocking
+
+    def _block_loop(self):
+        if self.app_blocker.active():
+            threading.Thread(target=self.app_blocker.tick, daemon=True).start()
+        self.root.after(4000, self._block_loop)
+
+    # -- sync
+
+    def _sync_every(self):
+        self.schedule_sync(0)
+        self.root.after(5 * 60_000, self._sync_every)
+
+    def schedule_sync(self, delay=3000):
+        if not self.online or not self.config.get("sync", True):
+            return
+        if self._sync_job:
+            self.root.after_cancel(self._sync_job)
+        self._sync_job = self.root.after(delay, self.sync_now)
+
+    def sync_now(self):
+        self._sync_job = None
+        if self._syncing:
+            self._sync_again = True
+            return
+        self._syncing = True
+        snapshot = self.log.shared()
+        repo = self.config.get("sync_repo") or sync.DEFAULT_REPO
+        token = self.config.get("sync_token") or None
+
+        def work():
+            try:
+                tok = token or sync.gh_cli_token()
+                if not tok:
+                    raise sync.SyncError("no GitHub token yet - add one in Settings")
+                self._sync_results.put(("ok", sync.sync(snapshot, sync.GitHubFile(repo, tok))))
+            except Exception as e:  # never let a network problem take the app down
+                self._sync_results.put(("error", str(e)))
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _sync_done(self, kind, value):
+        self._syncing = False
+        if kind == "ok":
+            if self.log.apply_shared(value):
+                self.refresh_counts()
+            self.sync_status = f"Synced at {datetime.now():%I:%M %p}".replace(" 0", " ")
+        else:
+            self.sync_status = f"Sync problem: {value}"
+        if self._sync_again:
+            self._sync_again = False
+            self.schedule_sync(500)
 
     def _poll_hotkey(self):
         while not self.hotkey.presses.empty():
             self.hotkey.presses.get_nowait()
             self.trigger()
+        while not self._sync_results.empty():
+            self._sync_done(*self._sync_results.get_nowait())
         self.root.after(150, self._poll_hotkey)
 
     def _tick_counts(self):
@@ -762,6 +928,9 @@ class App:
     def refresh_counts(self):
         since = self.log.since_last()
         gap = "none yet" if since is None else f"{format_gap(since)} ago" if since >= 60 else "just now"
+        left = self.app_blocker.remaining() if hasattr(self, "app_blocker") else 0
+        if left and self.lock is None:
+            gap = f"apps blocked {max(1, left // 60)}m"
         self.sub.config(text=f"today {self.log.today()}  ·  {gap}")
 
     def save_config(self):
@@ -831,6 +1000,10 @@ class App:
             return
         minutes = self.config["lock_minutes"]
         event = self.log.record_press(minutes)
+        if self.config.get("block_apps") and not preview:
+            cooldown = max(0, int(self.config.get("block_minutes") or 0))
+            self.app_blocker.start(self.config["block_apps"], (minutes + cooldown) * 60)
+            threading.Thread(target=self.app_blocker.tick, daemon=True).start()
         self.refresh_counts()
         self.lock = LockScreen(self, minutes, event, preview=preview)
 

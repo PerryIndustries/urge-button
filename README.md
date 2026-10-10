@@ -20,6 +20,15 @@ Tests: `python -m pytest tests`. Screenshots of any screen without locking (need
 
 ## iPhone
 
-Open https://perryindustries.github.io/urge-button/ in Safari, then Share, Add to Home Screen. History stays on the phone; Settings has backup and restore.
+Open https://perryindustries.github.io/urge-button/ in Safari, then Share, Add to Home Screen. Settings has backup and restore.
+
+## One history on PC and phone
+
+Both apps sync through `events.json` in the private repo `PerryIndustries/urge-data` (union by event id; the latest edit wins). A PC with the GitHub CLI logged in (`gh auth login`) needs nothing else. The phone, or a PC without `gh`, needs a token:
+
+1. Open https://github.com/settings/personal-access-tokens/new
+2. Name it "Urge Button", pick an expiry, Repository access: **Only select repositories** → `urge-data`
+3. Permissions → Repository permissions → **Contents: Read and write**. Generate, copy.
+4. Paste it into Settings → Sync on the phone (or the PC's "GitHub token" box) and save.
 
 The phone app is built from `phone/urge-button.html` by `python phone/build_pwa.py` into `docs/`, which GitHub Pages serves. Edit the source, rebuild, commit, push.
