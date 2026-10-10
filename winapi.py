@@ -1,0 +1,187 @@
+"""The Windows-only pieces: keyboard blocking, a global hotkey, media keys, start-with-Windows."""
+
+import ctypes
+import os
+import queue
+import subprocess
+import sys
+import threading
+from ctypes import wintypes
+from pathlib import Path
+
+user32 = ctypes.WinDLL("user32", use_last_error=True)
+kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+
+WH_KEYBOARD_LL = 13
+WM_QUIT = 0x0012
+WM_HOTKEY = 0x0312
+LLKHF_ALTDOWN = 0x20
+VK_TAB, VK_ESCAPE, VK_F4 = 0x09, 0x1B, 0x73
+VK_LWIN, VK_RWIN = 0x5B, 0x5C
+VK_CONTROL = 0x11
+VK_MEDIA_PLAY_PAUSE = 0xB3
+MOD_ALT, MOD_CONTROL, MOD_NOREPEAT = 0x1, 0x2, 0x4000
+
+
+class KBDLLHOOKSTRUCT(ctypes.Structure):
+    _fields_ = [
+        ("vkCode", wintypes.DWORD),
+        ("scanCode", wintypes.DWORD),
+        ("flags", wintypes.DWORD),
+        ("time", wintypes.DWORD),
+        ("dwExtraInfo", ctypes.c_size_t),
+    ]
+
+
+HOOKPROC = ctypes.WINFUNCTYPE(ctypes.c_ssize_t, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM)
+user32.SetWindowsHookExW.argtypes = [ctypes.c_int, HOOKPROC, wintypes.HINSTANCE, wintypes.DWORD]
+user32.SetWindowsHookExW.restype = wintypes.HHOOK
+user32.CallNextHookEx.argtypes = [wintypes.HHOOK, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM]
+user32.CallNextHookEx.restype = ctypes.c_ssize_t
+user32.UnhookWindowsHookEx.argtypes = [wintypes.HHOOK]
+user32.GetMessageW.argtypes = [ctypes.POINTER(wintypes.MSG), wintypes.HWND, wintypes.UINT, wintypes.UINT]
+user32.PostThreadMessageW.argtypes = [wintypes.DWORD, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+user32.RegisterHotKey.argtypes = [wintypes.HWND, ctypes.c_int, wintypes.UINT, wintypes.UINT]
+user32.GetAsyncKeyState.restype = ctypes.c_short
+kernel32.GetModuleHandleW.restype = wintypes.HMODULE
+
+
+def _message_loop():
+    msg = wintypes.MSG()
+    while user32.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:
+        yield msg
+        user32.TranslateMessage(ctypes.byref(msg))
+        user32.DispatchMessageW(ctypes.byref(msg))
+
+
+class KeyBlocker:
+    """Low-level keyboard hook that swallows the shortcuts used to leave a window.
+
+    Runs on its own thread with its own message loop so a busy Tk loop can never
+    make Windows time the hook out.
+    """
+
+    def __init__(self):
+        self._thread_id = None
+        self._ready = threading.Event()
+        self._proc = HOOKPROC(self._callback)  # keep a reference or ctypes frees it
+
+    @staticmethod
+    def should_block(vk, alt_down, ctrl_down):
+        if vk in (VK_LWIN, VK_RWIN):
+            return True
+        if alt_down and vk in (VK_TAB, VK_ESCAPE, VK_F4):
+            return True
+        return vk == VK_ESCAPE and ctrl_down  # Ctrl+Esc, Ctrl+Shift+Esc
+
+    def _callback(self, code, wparam, lparam):
+        try:
+            if code == 0:
+                kb = ctypes.cast(lparam, ctypes.POINTER(KBDLLHOOKSTRUCT)).contents
+                ctrl = user32.GetAsyncKeyState(VK_CONTROL) & 0x8000
+                if self.should_block(kb.vkCode, kb.flags & LLKHF_ALTDOWN, ctrl):
+                    return 1
+        except Exception:
+            pass
+        return user32.CallNextHookEx(None, code, wparam, lparam)
+
+    def _run(self):
+        self._thread_id = kernel32.GetCurrentThreadId()
+        hook = user32.SetWindowsHookExW(WH_KEYBOARD_LL, self._proc, kernel32.GetModuleHandleW(None), 0)
+        self._ready.set()
+        for _ in _message_loop():
+            pass
+        if hook:
+            user32.UnhookWindowsHookEx(hook)
+
+    def start(self):
+        self._ready.clear()
+        threading.Thread(target=self._run, daemon=True).start()
+        self._ready.wait(2)
+
+    def stop(self):
+        if self._thread_id:
+            user32.PostThreadMessageW(self._thread_id, WM_QUIT, 0, 0)
+        self._thread_id = None
+
+
+class Hotkey:
+    """Ctrl+Alt+U from anywhere (including a full-screen game). Presses land in `self.presses`."""
+
+    def __init__(self, key="U"):
+        self.key = key
+        self.presses = queue.Queue()
+        self.ok = False
+        self._ready = threading.Event()
+
+    def _run(self):
+        self.ok = bool(user32.RegisterHotKey(None, 1, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, ord(self.key)))
+        self._ready.set()
+        if not self.ok:
+            return
+        for msg in _message_loop():
+            if msg.message == WM_HOTKEY:
+                self.presses.put(True)
+
+    def start(self):
+        threading.Thread(target=self._run, daemon=True).start()
+        self._ready.wait(2)
+        return self.ok
+
+
+def virtual_screen():
+    """Bounding box of every monitor: (x, y, width, height)."""
+    g = user32.GetSystemMetrics
+    return g(76), g(77), g(78), g(79)
+
+
+def press_media_play():
+    user32.keybd_event(VK_MEDIA_PLAY_PAUSE, 0, 0, 0)
+    user32.keybd_event(VK_MEDIA_PLAY_PAUSE, 0, 2, 0)
+
+
+def single_instance():
+    kernel32.CreateMutexW(None, False, "UrgeButtonSingleInstance")
+    return ctypes.get_last_error() != 183  # ERROR_ALREADY_EXISTS
+
+
+def set_dpi_aware():
+    try:
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)
+    except (AttributeError, OSError):
+        pass
+
+
+# -- start with Windows: a shortcut in the user's Startup folder
+
+STARTUP_LINK = (
+    Path(os.environ.get("APPDATA", Path.home()))
+    / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup" / "Urge Button.lnk"
+)
+SCRIPT = Path(__file__).resolve().parent / "urge_button.py"
+
+
+def pythonw():
+    exe = Path(sys.executable)
+    w = exe.with_name("pythonw.exe")
+    return w if w.exists() else exe
+
+
+def starts_with_windows():
+    return STARTUP_LINK.exists()
+
+
+def set_start_with_windows(enabled):
+    if not enabled:
+        STARTUP_LINK.unlink(missing_ok=True)
+        return True
+    ps = (
+        "$s = (New-Object -ComObject WScript.Shell).CreateShortcut($env:URGE_LINK);"
+        "$s.TargetPath = $env:URGE_EXE; $s.Arguments = '\"' + $env:URGE_SCRIPT + '\"';"
+        "$s.WorkingDirectory = $env:URGE_DIR; $s.Save()"
+    )
+    env = dict(os.environ, URGE_LINK=str(STARTUP_LINK), URGE_EXE=str(pythonw()),
+               URGE_SCRIPT=str(SCRIPT), URGE_DIR=str(SCRIPT.parent))
+    subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
+                   env=env, creationflags=0x08000000, check=False)  # CREATE_NO_WINDOW
+    return STARTUP_LINK.exists()

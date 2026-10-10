@@ -1,0 +1,688 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0E0F10">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Urge">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="icon" href="icon-192.png">
+<title>Urge Button</title>
+<style>
+/* Layout: one thumb-width column, a fixed tab bar, and a full-screen lock layer over everything. */
+:root {
+  --bg: #0E0F10;
+  --panel: #17191C;
+  --panel-2: #202327;
+  --line: #2A2D31;
+  --text: #F2F2F0;
+  --muted: #9AA0A6;
+  --accent: #6A75F7;
+  --accent-soft: #454C9E;
+  --good: #59DAC3;
+  --warn: #E8B35A;
+  --bad: #F2726F;
+  --heat-zero: #1D1F22;
+  --display: -apple-system, "SF Pro Display", "Segoe UI", system-ui, sans-serif;
+  --body: -apple-system, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+html { padding-top: env(safe-area-inset-top, 0px); }
+[hidden] { display: none !important; }
+body {
+  background: var(--bg); color: var(--text); font-family: var(--body); font-size: 15px;
+  -webkit-tap-highlight-color: transparent; overscroll-behavior: none;
+}
+button { font: inherit; color: inherit; border: 0; background: none; cursor: pointer; }
+button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.wrap { max-width: 520px; margin: 0 auto; padding-inline: 16px; padding-block: 18px 96px; display: grid; gap: 18px; }
+.top { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.brand { font-family: var(--display); font-weight: 800; font-size: 20px; letter-spacing: -0.01em; }
+.chip { font-size: 12px; color: var(--muted); background: var(--panel); border-radius: 999px; padding: 5px 10px; }
+.chip.warn { color: var(--warn); }
+h2 { font-family: var(--display); font-weight: 600; font-size: 22px; margin: 0; text-wrap: balance; }
+h3 { font-size: 14px; font-weight: 700; margin: 0; }
+.sub { color: var(--muted); font-size: 12.5px; margin: 2px 0 0; }
+.tab[hidden] { display: none !important; }
+.tab { display: grid; gap: 14px; }
+
+/* Home */
+.hero { display: grid; justify-items: center; gap: 14px; padding-block: 10px 4px; }
+.urge {
+  width: min(64vw, 240px); aspect-ratio: 1; border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #8A93FF, var(--accent) 55%, #4E58D6);
+  box-shadow: 0 0 0 10px rgba(106,117,247,.12), 0 18px 40px rgba(40,46,140,.45);
+  display: grid; place-content: center; text-align: center; gap: 4px;
+  transition: transform .12s ease;
+}
+.urge:active { transform: scale(.96); }
+.urge b { font-family: var(--display); font-weight: 800; font-size: 34px; letter-spacing: .02em; }
+.urge span { font-size: 13px; opacity: .9; }
+.hint { color: var(--muted); font-size: 13px; text-align: center; max-width: 30ch; margin: 0; }
+.tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.tile { background: var(--panel); border-radius: 12px; padding: 12px 14px; min-width: 0; }
+.tile .k { color: var(--muted); font-size: 12px; }
+.tile .v { font-family: var(--display); font-weight: 800; font-size: 28px; line-height: 1.15; font-variant-numeric: tabular-nums; }
+.tile .d { font-size: 12px; color: var(--muted); }
+.tile .d.good { color: var(--good); }
+.tile .d.warn { color: var(--warn); }
+.ghost { background: var(--panel); border-radius: 12px; padding: 13px 16px; text-align: left; display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.ghost small { color: var(--muted); display: block; font-size: 12px; }
+.card { background: var(--panel); border-radius: 12px; padding: 14px 14px 10px; display: grid; gap: 8px; min-width: 0; }
+.card svg { width: 100%; height: auto; display: block; overflow: visible; }
+.empty { color: var(--muted); font-size: 13px; padding: 18px 0; text-align: center; }
+
+/* Settings */
+label.f { display: grid; gap: 6px; font-size: 13px; color: var(--muted); }
+input[type=text], input[type=number], textarea {
+  font: inherit; color: var(--text); background: var(--panel); border: 1px solid var(--line);
+  border-radius: 10px; padding: 11px 12px; width: 100%;
+}
+textarea { min-height: 110px; resize: vertical; }
+.btn { background: var(--panel-2); border-radius: 10px; padding: 12px 18px; font-weight: 600; color: var(--text); text-decoration: none; display: inline-block; cursor: pointer; }
+.btn.primary { background: var(--accent); }
+.row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+.note { color: var(--muted); font-size: 12.5px; line-height: 1.5; margin: 0; }
+
+/* Tab bar */
+nav.bar {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 5;
+  background: rgba(14,15,16,.94); backdrop-filter: blur(10px); border-top: 1px solid var(--line);
+  padding: 8px 16px calc(8px + env(safe-area-inset-bottom, 0px));
+  display: flex; justify-content: center; gap: 6px;
+}
+nav.bar button { flex: 1; max-width: 160px; padding: 9px 0; border-radius: 10px; color: var(--muted); font-weight: 600; font-size: 13.5px; }
+nav.bar button[aria-current=true] { color: var(--text); background: var(--panel); }
+
+/* Lock layer */
+.lock {
+  position: fixed; inset: 0; z-index: 20; background: var(--bg); overflow-y: auto;
+  padding: calc(24px + env(safe-area-inset-top, 0px)) 16px calc(24px + env(safe-area-inset-bottom, 0px));
+}
+.lock-in { max-width: 520px; margin: 0 auto; display: grid; gap: 14px; justify-items: center; text-align: center; }
+.lock h1 { font-family: var(--display); font-weight: 800; font-size: 28px; margin: 6px 0 0; text-wrap: balance; }
+.clock { font-family: var(--display); font-weight: 800; font-size: 76px; line-height: 1; color: var(--accent); font-variant-numeric: tabular-nums; }
+.clock.done { color: var(--good); font-size: 46px; }
+.opts { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; width: 100%; }
+.opt { background: var(--panel); border-radius: 14px; padding: 18px 12px; display: grid; gap: 4px; text-align: center; }
+.opt b { font-size: 16px; }
+.opt span { color: var(--muted); font-size: 12.5px; }
+.opt:active { background: var(--panel-2); }
+.stage { width: 100%; display: grid; gap: 12px; justify-items: center; }
+.say { background: var(--panel); border-radius: 12px; padding: 14px 16px; font-size: 17px; font-style: italic; width: 100%; user-select: text; }
+.link { display: inline-block; background: var(--accent); color: var(--text); text-decoration: none; border-radius: 10px; padding: 12px 18px; font-weight: 700; }
+.scale { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; width: 100%; }
+.scale button { background: var(--panel-2); border-radius: 12px; padding: 12px 0 9px; display: grid; gap: 2px; }
+.scale button b { font-family: var(--display); font-size: 22px; }
+.scale button span { font-size: 10.5px; color: var(--muted); min-height: 1.2em; }
+.scale button[aria-pressed=true] { background: var(--accent); }
+.scale button[aria-pressed=true] span { color: var(--text); }
+
+/* Sudoku */
+.sdk { display: grid; grid-template-columns: repeat(9, 1fr); width: min(100%, 380px); aspect-ratio: 1; background: var(--muted); gap: 1px; padding: 2px; border-radius: 6px; }
+.sdk button { background: var(--panel); font-size: clamp(16px, 5vw, 22px); font-weight: 500; color: var(--accent); padding: 0; font-variant-numeric: tabular-nums; }
+.sdk button.given { color: var(--text); font-weight: 700; background: var(--panel-2); }
+.sdk button.sel { background: #2D3266; }
+.sdk button.peer { background: #1C1F2B; }
+.sdk button.bad { color: var(--bad); }
+.sdk button.c3 { margin-right: 1px; } .sdk button.r3 { margin-bottom: 1px; }
+.pad { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; width: min(100%, 380px); }
+.pad button { background: var(--panel-2); border-radius: 10px; padding: 11px 0; font-size: 18px; font-weight: 700; }
+
+/* Sheet + tooltip */
+.sheet-bg { position: fixed; inset: 0; z-index: 15; background: rgba(0,0,0,.55); display: grid; align-items: end; }
+.sheet { background: var(--panel); border-radius: 18px 18px 0 0; padding: 20px 16px calc(20px + env(safe-area-inset-bottom, 0px)); display: grid; gap: 14px; max-width: 520px; width: 100%; margin: 0 auto; }
+.tip { position: fixed; z-index: 30; pointer-events: none; background: #2E3236; color: var(--text); font-size: 12px; padding: 6px 9px; border-radius: 8px; white-space: pre; transform: translate(-50%, calc(-100% - 8px)); text-align: center; }
+@media (prefers-reduced-motion: reduce) { .urge { transition: none; } }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <div class="top">
+    <span class="brand">Urge Button</span>
+    <span class="chip" id="sync">Saved on this phone</span>
+  </div>
+
+  <section class="tab" id="tab-home">
+    <div class="hero">
+      <button class="urge" id="urgeBtn" aria-label="I have an urge - start the lock">
+        <b>URGE</b><span id="lockLen">3 minute lock</span>
+      </button>
+      <p class="hint">Tap it the moment an urge hits. The screen is yours again when the timer runs out.</p>
+    </div>
+    <div class="tiles" id="homeTiles"></div>
+    <button class="ghost" id="logOwnBtn">
+      <span>Handled one without the lock?<small>Log it so the count stays honest</small></span><span aria-hidden="true">+</span>
+    </button>
+    <div class="card">
+      <div><h3>Last 7 days</h3><p class="sub" id="weekSub"></p></div>
+      <div id="weekChart"></div>
+    </div>
+  </section>
+
+  <section class="tab" id="tab-progress" hidden>
+    <div><h2>Your progress</h2><p class="sub">Fewer, weaker and further apart is the trend you're after. Tap any bar for its number.</p></div>
+    <div class="tiles" id="progTiles"></div>
+    <div class="card"><div><h3>Today, hour by hour</h3><p class="sub" id="todaySub"></p></div><div id="todayChart"></div></div>
+    <div class="card"><div><h3>Last 30 days</h3><p class="sub" id="monthSub"></p></div><div id="monthChart"></div></div>
+    <div class="card"><div><h3>When urges hit</h3><p class="sub">Last 30 days by day and hour. Brighter means more.</p></div><div id="heatChart"></div></div>
+    <div class="card"><div><h3>How strong they were</h3><p class="sub">Average rating per day. 1 is mild, 5 is intense.</p></div><div id="strengthChart"></div></div>
+    <div class="card"><div><h3>What you did instead</h3><p class="sub">Last 30 days</p></div><div id="choiceChart"></div></div>
+  </section>
+
+  <section class="tab" id="tab-settings" hidden>
+    <h2>Settings</h2>
+    <label class="f" for="setMinutes">Lock length in minutes (1-30)
+      <input type="number" id="setMinutes" min="1" max="30" inputmode="numeric">
+    </label>
+    <label class="f" for="setSpotify">Spotify playlist link (from Share, then Copy link)
+      <input type="text" id="setSpotify" placeholder="https://open.spotify.com/playlist/..." autocomplete="off">
+    </label>
+    <label class="f" for="setFriends">Friends to reach out to, one per line
+      <textarea id="setFriends" placeholder="Sam&#10;Jordan"></textarea>
+    </label>
+    <div class="row"><button class="btn primary" id="saveSettings">Save</button><span class="note" id="savedNote"></span></div>
+    <label class="f" for="setShortcut">iPhone Shortcut to run when you tap URGE (leave blank for none)
+      <input type="text" id="setShortcut" placeholder="Urge Mode" autocomplete="off" autocapitalize="off">
+    </label>
+    <p class="note">With a Shortcut name here, tapping URGE starts the lock and then runs that Shortcut, for example to turn on a Focus and start your playlist. Swipe back to this app afterwards. The timer keeps running while you're away.</p>
+    <div class="card">
+      <div><h3>Backup</h3><p class="sub" id="backupSub"></p></div>
+      <div class="row"><a class="btn" id="exportBtn" href="#">Save a backup</a><label class="btn" for="importFile">Restore a backup</label><input type="file" id="importFile" accept="application/json,.json" hidden></div>
+      <p class="note" id="backupNote">Your history lives on this phone only. Save a backup now and then and keep it in Files or iCloud Drive.</p>
+    </div>
+    <p class="note">A phone app can't lock the whole phone. If you leave during a lock, the timer keeps running, and the lock is still here when you come back. For a harder lock, turn on Guided Access (Settings, Accessibility, Guided Access) and triple-click the side button when the lock starts.</p>
+  </section>
+</div>
+
+<nav class="bar" aria-label="Sections">
+  <button data-tab="home" aria-current="true">Home</button>
+  <button data-tab="progress">Progress</button>
+  <button data-tab="settings">Settings</button>
+</nav>
+
+<div class="lock" id="lock" hidden>
+  <div class="lock-in">
+    <h1 id="lockTitle">Breathe. This passes.</h1>
+    <p class="sub" id="lockCount"></p>
+    <div class="clock" id="clock">3:00</div>
+    <div class="stage" id="stage"></div>
+  </div>
+</div>
+
+<div class="tip" id="tip" hidden></div>
+
+<script>
+(() => {
+  "use strict";
+  const $ = (id) => document.getElementById(id);
+  const DAY = 86400000;
+  const OPTIONS = [
+    ["walk", "Go for a walk", "Shoes on. Out the door."],
+    ["spotify", "Play some music", "Put a playlist on."],
+    ["sudoku", "Play Sudoku", "Give your hands something to do."],
+    ["friend", "Reach out", "Text a friend."],
+  ];
+  const NAMES = { walk: "Go for a walk", spotify: "Play some music", sudoku: "Play Sudoku", friend: "Reach out to a friend", on_own: "Handled it on my own" };
+  const PROMPTS = [
+    "hey, been thinking about you. how's your week going?",
+    "random q: what's the best thing that happened to you this week?",
+    "want to get food or go for a walk sometime this week?",
+    "saw something that reminded me of you. how are you doing?",
+    "what are you up to this weekend?",
+    "ok I need a recommendation. show, album, anything. go.",
+  ];
+  const HOURS = ["12a","1a","2a","3a","4a","5a","6a","7a","8a","9a","10a","11a","12p","1p","2p","3p","4p","5p","6p","7p","8p","9p","10p","11p"];
+  const WD = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
+  const STRENGTH = { 1: "mild", 2: "", 3: "medium", 4: "", 5: "intense" };
+
+  // ---------------------------------------------------------------- storage
+  const ls = {
+    get(k, d) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch { return d; } },
+    set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
+    del(k) { try { localStorage.removeItem(k); } catch {} },
+  };
+  const S = {
+    months: ls.get("urge.months", {}),           // "2026-10" -> [event]; events: {id, t, kind, minutes, choices, intensity}
+    settings: Object.assign({ lockMinutes: 3, spotify: "", shortcut: "", friends: [] }, ls.get("urge.settings", {})),
+  };
+  const monthKey = (t) => { const d = new Date(t); return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0"); };
+  const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+
+  function setSync(text, warn) { const c = $("sync"); c.textContent = text; c.classList.toggle("warn", !!warn); }
+
+  function persistMonth(key) {
+    ls.set("urge.months", S.months);
+  }
+  function persistSettings() {
+    ls.set("urge.settings", S.settings);
+  }
+  function addEvent(ev) {
+    const k = monthKey(ev.t);
+    S.months[k] = (S.months[k] || []).concat([ev]);
+    persistMonth(k); render();
+  }
+  function updateEvent(id, fn) {
+    for (const k of Object.keys(S.months)) {
+      const i = S.months[k].findIndex((e) => e.id === id);
+      if (i >= 0) {
+        const copy = S.months[k].slice();
+        copy[i] = fn(JSON.parse(JSON.stringify(copy[i])));
+        S.months[k] = copy; persistMonth(k); render(); return;
+      }
+    }
+  }
+
+  // ---------------------------------------------------------------- stats
+  const events = () => Object.values(S.months).flat().filter((e) => e && typeof e.t === "number").sort((a, b) => a.t - b.t);
+  const sod = (t) => { const d = new Date(t); return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime(); };
+  const sow = (t) => { const d = new Date(sod(t)); return d.getTime() - ((d.getDay() + 6) % 7) * DAY; };
+  const between = (ev, a, b) => ev.filter((e) => e.t >= a && e.t < b).length;
+  const dayStart = (t, back) => { const d = new Date(sod(t)); d.setDate(d.getDate() - back); return d.getTime(); };
+  const plural = (n, w) => n + " " + w + (n === 1 ? "" : "s");
+  function gap(ms) {
+    const s = Math.max(0, Math.floor(ms / 1000));
+    if (s < 60) return "just now";
+    const m = Math.floor(s / 60); if (m < 60) return m + "m";
+    const h = Math.floor(m / 60), mm = m % 60; if (h < 24) return mm ? h + "h " + mm + "m" : h + "h";
+    const d = Math.floor(h / 24), hh = h % 24; return hh ? d + "d " + hh + "h" : d + "d";
+  }
+  function stats() {
+    const ev = events(), now = Date.now();
+    const today = between(ev, sod(now), now + 1);
+    const yday = between(ev, dayStart(now, 1), now - DAY + 1);
+    const week = between(ev, sow(now), now + 1);
+    const lastWeek = between(ev, sow(now - 7 * DAY), now - 7 * DAY + 1);
+    const last = ev.length ? ev[ev.length - 1].t : null;
+    let longest = null;
+    if (ev.length) { longest = now - last; for (let i = 1; i < ev.length; i++) longest = Math.max(longest, ev[i].t - ev[i - 1].t); }
+    const days = (n) => Array.from({ length: n }, (_, i) => dayStart(now, n - 1 - i));
+    const perDay = (n) => days(n).map((d) => ({ d, n: between(ev, d, dayStart(d, -1)) }));
+    const byHour = Array(24).fill(0);
+    ev.forEach((e) => { if (e.t >= sod(now)) byHour[new Date(e.t).getHours()]++; });
+    const heat = Array.from({ length: 7 }, () => Array(24).fill(0));
+    const since30 = dayStart(now, 29);
+    ev.forEach((e) => { if (e.t >= since30) { const d = new Date(e.t); heat[(d.getDay() + 6) % 7][d.getHours()]++; } });
+    const strength = days(30).map((d) => {
+      const v = ev.filter((e) => e.t >= d && e.t < dayStart(d, -1) && typeof e.intensity === "number").map((e) => e.intensity);
+      return { d, v: v.length ? v.reduce((a, b) => a + b, 0) / v.length : null };
+    });
+    const choices = { walk: 0, spotify: 0, sudoku: 0, friend: 0, on_own: 0 };
+    ev.forEach((e) => { if (e.t < since30) return; if (e.kind === "logged") choices.on_own++; (e.choices || []).forEach((c) => { choices[c] = (choices[c] || 0) + 1; }); });
+    const locks = ev.filter((e) => e.kind !== "logged").length;
+    return { ev, now, today, yday, week, lastWeek, last, longest, perDay, byHour, heat, strength, choices, locks };
+  }
+  function delta(a, b, unit) {
+    const d = a - b;
+    if (d < 0) return ["▼ " + -d + " fewer than " + unit, "good"];
+    if (d > 0) return ["▲ " + d + " more than " + unit, "warn"];
+    return ["same as " + unit, ""];
+  }
+
+  // ---------------------------------------------------------------- charts (SVG, tap or hover for values)
+  const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  function niceTop(max) {
+    for (const step of [1, 2, 5, 10, 25, 50, 100]) { const n = Math.ceil(max / step); if (n <= 4) return [step * Math.max(1, n), step]; }
+    return [max, max];
+  }
+  function bars(values, labels, tips, hi, line) {
+    const W = 340, H = 150, L = 24, T = 6, B = H - 18;
+    const peak = Math.max(1, ...values, ...(line || []).filter((v) => v != null));
+    const [top, step] = niceTop(peak);
+    const y = (v) => B - (v / top) * (B - T);
+    let s = `<svg viewBox="0 0 ${W} ${H}" role="img">`;
+    for (let v = 0; v <= top; v += step) s += `<line x1="${L}" x2="${W}" y1="${y(v)}" y2="${y(v)}" stroke="var(--line)"/><text x="${L - 6}" y="${y(v) + 3.5}" fill="var(--muted)" font-size="10" text-anchor="end">${v}</text>`;
+    const bw = (W - L) / values.length;
+    values.forEach((v, i) => {
+      const x = L + i * bw;
+      s += `<rect x="${x}" y="${T}" width="${bw}" height="${B - T}" fill="transparent" data-tip="${esc(tips[i])}"/>`;
+      if (v > 0) {
+        const h = B - y(v), r = Math.min(3, (bw - 2) / 2, h);
+        s += `<path d="M${x + 1},${B} V${y(v) + r} q0,-${r} ${r},-${r} H${x + bw - 1 - r} q${r},0 ${r},${r} V${B} Z" fill="${hi.has(i) ? "var(--accent)" : "var(--accent-soft)"}" data-tip="${esc(tips[i])}"/>`;
+      }
+      if (labels[i]) s += `<text x="${x + bw / 2}" y="${H - 4}" fill="var(--muted)" font-size="10" text-anchor="middle">${labels[i]}</text>`;
+    });
+    s += `<line x1="${L}" x2="${W}" y1="${B}" y2="${B}" stroke="var(--muted)"/>`;
+    if (line) {
+      const pts = line.map((v, i) => v == null ? null : `${L + (i + 0.5) * bw},${y(v)}`).filter(Boolean);
+      if (pts.length > 1) s += `<polyline points="${pts.join(" ")}" fill="none" stroke="var(--text)" stroke-width="2" stroke-linejoin="round" pointer-events="none"/>`;
+    }
+    return s + "</svg>";
+  }
+  function heatmap(grid) {
+    const W = 340, L = 30, cw = (W - L) / 24, ch = 17, H = 7 * ch + 18;
+    const peak = Math.max(1, ...grid.flat());
+    let s = `<svg viewBox="0 0 ${W} ${H}" role="img">`;
+    grid.forEach((row, d) => {
+      s += `<text x="${L - 6}" y="${d * ch + ch / 2 + 3.5}" fill="var(--muted)" font-size="10" text-anchor="end">${WD[d]}</text>`;
+      row.forEach((v, h) => {
+        const a = v ? 0.25 + 0.75 * Math.pow(v / peak, 0.8) : 0;
+        const fill = v ? `rgba(160,168,255,${a.toFixed(2)})` : "var(--heat-zero)";
+        s += `<rect x="${L + h * cw + 0.75}" y="${d * ch + 0.75}" width="${cw - 1.5}" height="${ch - 1.5}" rx="2" fill="${fill}" data-tip="${esc(WD[d] + " " + HOURS[h] + "-" + HOURS[(h + 1) % 24] + "\n" + plural(v, "urge"))}"/>`;
+      });
+    });
+    for (let h = 0; h < 24; h += 3) s += `<text x="${L + (h + 0.5) * cw}" y="${H - 3}" fill="var(--muted)" font-size="10" text-anchor="middle">${HOURS[h]}</text>`;
+    return s + "</svg>";
+  }
+  function strengthLine(series) {
+    if (!series.some((p) => p.v != null)) return `<p class="empty">Rate each urge when the lock ends and the trend shows up here.</p>`;
+    const W = 340, H = 130, L = 24, R = 8, T = 8, B = H - 18;
+    const x = (i) => L + i * (W - L - R) / (series.length - 1);
+    const y = (v) => B - (v - 1) / 4 * (B - T);
+    let s = `<svg viewBox="0 0 ${W} ${H}" role="img">`;
+    [1, 3, 5].forEach((v) => { s += `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" stroke="var(--line)"/><text x="${L - 6}" y="${y(v) + 3.5}" fill="var(--muted)" font-size="10" text-anchor="end">${v}</text>`; });
+    let run = [];
+    const flush = () => { if (run.length > 1) s += `<polyline points="${run.join(" ")}" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linejoin="round"/>`; run = []; };
+    series.forEach((p, i) => { if (p.v == null) flush(); else run.push(`${x(i)},${y(p.v)}`); });
+    flush();
+    series.forEach((p, i) => {
+      if (p.v == null) return;
+      const tip = esc(fmtDay(p.d) + "\naverage " + p.v.toFixed(1) + " / 5");
+      s += `<circle cx="${x(i)}" cy="${y(p.v)}" r="11" fill="transparent" data-tip="${tip}"/><circle cx="${x(i)}" cy="${y(p.v)}" r="4" fill="var(--accent)" stroke="var(--panel)" stroke-width="2" data-tip="${tip}"/>`;
+    });
+    [0, 14, 29].forEach((i) => { s += `<text x="${x(i)}" y="${H - 3}" fill="var(--muted)" font-size="10" text-anchor="${i === 0 ? "start" : i === 29 ? "end" : "middle"}">${fmtShort(series[i].d)}</text>`; });
+    return s + "</svg>";
+  }
+  function choiceBars(c) {
+    const rows = Object.entries(c), peak = Math.max(1, ...rows.map((r) => r[1]));
+    const W = 340, rh = 26, H = rows.length * rh, L = 150;
+    let s = `<svg viewBox="0 0 ${W} ${H}" role="img">`;
+    rows.forEach(([k, v], i) => {
+      const cy = i * rh + rh / 2, w = (W - L - 30) * v / peak;
+      s += `<text x="0" y="${cy + 4}" fill="var(--text)" font-size="12">${NAMES[k]}</text>`;
+      if (v) s += `<rect x="${L}" y="${cy - 6}" width="${w}" height="12" rx="3" fill="var(--accent-soft)"/>`;
+      s += `<text x="${L + w + 6}" y="${cy + 4}" fill="var(--text)" font-size="12">${v}</text>`;
+    });
+    return s + "</svg>";
+  }
+  const fmtDay = (t) => new Date(t).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" });
+  const fmtShort = (t) => new Date(t).toLocaleDateString(undefined, { day: "numeric", month: "short" });
+  const fmtTime = (t) => new Date(t).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+
+  // tooltips: one delegated handler for every chart
+  const tip = $("tip");
+  function showTip(e) {
+    const t = e.target.closest && e.target.closest("[data-tip]");
+    if (!t) { tip.hidden = true; return; }
+    const r = t.getBoundingClientRect();
+    tip.textContent = t.getAttribute("data-tip");
+    tip.hidden = false;
+    const x = Math.min(window.innerWidth - 70, Math.max(70, r.left + r.width / 2));
+    tip.style.left = x + "px"; tip.style.top = r.top + "px";
+  }
+  document.addEventListener("pointerover", showTip);
+  document.addEventListener("pointerdown", showTip);
+  window.addEventListener("scroll", () => { tip.hidden = true; }, { passive: true });
+
+  // ---------------------------------------------------------------- render
+  function tileHTML(k, v, d, cls) { return `<div class="tile"><div class="k">${k}</div><div class="v">${v}</div><div class="d ${cls || ""}">${d}</div></div>`; }
+  function render() {
+    const s = stats();
+    $("lockLen").textContent = S.settings.lockMinutes + " minute lock";
+    const [td, tc] = delta(s.today, s.yday, "yesterday by now");
+    const [wd, wc] = delta(s.week, s.lastWeek, "last week by now");
+    const since = s.last == null ? "-" : gap(s.now - s.last);
+    const onIt = s.last != null && s.longest === s.now - s.last;
+    $("homeTiles").innerHTML =
+      tileHTML("Today", s.today, td, tc) +
+      tileHTML("Since your last urge", since, s.last ? "last one " + fmtTime(s.last) : "nothing logged yet");
+    $("progTiles").innerHTML =
+      tileHTML("Today", s.today, td, tc) + tileHTML("This week", s.week, wd, wc) +
+      tileHTML("Since your last urge", since, s.last ? "last one " + fmtDay(s.last) + ", " + fmtTime(s.last) : "nothing logged yet") +
+      tileHTML("Longest stretch", s.longest == null ? "-" : gap(s.longest), onIt ? "you're on it right now" : (s.last ? "current " + since : ""), onIt ? "good" : "") +
+      tileHTML("All time", s.ev.length, s.locks + " locked, " + (s.ev.length - s.locks) + " on your own");
+
+    const w7 = s.perDay(7);
+    $("weekSub").textContent = plural(w7.reduce((a, b) => a + b.n, 0), "urge") + " this past week";
+    $("weekChart").innerHTML = bars(w7.map((p) => p.n), w7.map((p) => new Date(p.d).toLocaleDateString(undefined, { weekday: "short" })),
+      w7.map((p) => fmtDay(p.d) + "\n" + plural(p.n, "urge")), new Set([6]));
+
+    const h = new Date(s.now).getHours();
+    $("todaySub").textContent = plural(s.today, "urge") + " so far today";
+    $("todayChart").innerHTML = s.today ? bars(s.byHour, HOURS.map((l, i) => i % 3 ? "" : l),
+      s.byHour.map((v, i) => HOURS[i] + "-" + HOURS[(i + 1) % 24] + "\n" + plural(v, "urge")), new Set([h]))
+      : `<p class="empty">Nothing logged yet today.</p>`;
+
+    const d36 = s.perDay(36), d30 = d36.slice(6);
+    const avg = d30.map((_, i) => d36.slice(i, i + 7).reduce((a, b) => a + b.n, 0) / 7);
+    $("monthSub").textContent = plural(d30.reduce((a, b) => a + b.n, 0), "urge") + ". The line is the 7-day average.";
+    $("monthChart").innerHTML = bars(d30.map((p) => p.n), d30.map((p, i) => [0, 10, 20, 29].includes(i) ? fmtShort(p.d) : ""),
+      d30.map((p, i) => fmtDay(p.d) + "\n" + plural(p.n, "urge") + "\n7-day avg " + avg[i].toFixed(1)), new Set([29]), avg);
+    $("heatChart").innerHTML = heatmap(s.heat);
+    $("strengthChart").innerHTML = strengthLine(s.strength);
+    $("choiceChart").innerHTML = choiceBars(s.choices);
+  }
+
+  // ---------------------------------------------------------------- tabs
+  document.querySelectorAll("nav.bar button").forEach((b) => b.addEventListener("click", () => {
+    document.querySelectorAll("nav.bar button").forEach((x) => x.setAttribute("aria-current", String(x === b)));
+    ["home", "progress", "settings"].forEach((t) => { $("tab-" + t).hidden = t !== b.dataset.tab; });
+    window.scrollTo(0, 0);
+  }));
+
+  // ---------------------------------------------------------------- lock
+  let active = ls.get("urge.active", null);   // {id, endAt, done}
+  let ticker = null, wake = null;
+
+  function startLock() {
+    if (active && !active.done) return showLock();
+    const minutes = Math.max(1, Math.min(30, Number(S.settings.lockMinutes) || 3));
+    const ev = { id: uid(), t: Date.now(), kind: "lock", minutes, choices: [], intensity: null };
+    addEvent(ev);
+    active = { id: ev.id, endAt: ev.t + minutes * 60000, done: false };
+    ls.set("urge.active", active);
+    try { document.documentElement.requestFullscreen && document.documentElement.requestFullscreen().catch(() => {}); } catch {}
+    showLock();
+    if (S.settings.shortcut) setTimeout(() => { location.href = "shortcuts://run-shortcut?name=" + encodeURIComponent(S.settings.shortcut); }, 600);
+  }
+  function showLock() {
+    const s = stats();
+    $("lockCount").textContent = "Urge #" + s.today + " today, " + s.week + " this week";
+    $("lock").hidden = false;
+    document.body.style.overflow = "hidden";
+    try { navigator.wakeLock && navigator.wakeLock.request("screen").then((w) => { wake = w; }).catch(() => {}); } catch {}
+    if (active.done || Date.now() >= active.endAt) return finish();
+    $("clock").className = "clock"; $("lockTitle").textContent = "Breathe. This passes.";
+    options();
+    clearInterval(ticker); ticker = setInterval(tick, 250); tick();
+  }
+  function tick() {
+    const left = Math.max(0, Math.ceil((active.endAt - Date.now()) / 1000));
+    $("clock").textContent = Math.floor(left / 60) + ":" + String(left % 60).padStart(2, "0");
+    if (left <= 0) finish();
+  }
+  document.addEventListener("visibilitychange", () => { if (!document.hidden && active && !$("lock").hidden) { if (!active.done) tick(); } });
+
+  function stage(html) { $("stage").innerHTML = html; }
+  function backBtn() { return `<button class="btn" data-act="back">Back to the options</button>`; }
+  function options() {
+    stage(`<p class="sub">Pick one:</p><div class="opts">${OPTIONS.map(([k, t, d]) => `<button class="opt" data-opt="${k}"><b>${t}</b><span>${d}</span></button>`).join("")}</div>`);
+  }
+  function choose(k) {
+    updateEvent(active.id, (e) => { e.choices = e.choices || []; if (!e.choices.includes(k)) e.choices.push(k); return e; });
+    ({ walk, spotify, sudoku, friend })[k]();
+  }
+  function walk() {
+    stage(`<h2>Go for a walk</h2><p class="note" style="font-size:15px">Stand up. Shoes on. Phone in your pocket, not your hand.<br>Walk to the end of the street and back, or around the block.<br>Notice five things you can see on the way.<br><br>The timer keeps going while you're out.</p>${backBtn()}`);
+  }
+  function spotify() {
+    const link = spotifyApp(S.settings.spotify);
+    stage(`<h2>Put some music on</h2><a class="link" href="${esc(link)}">Open Spotify</a>
+      <p class="note">${S.settings.spotify ? "Opens your playlist. Press play, close your eyes for one song, then come back." : "Add your own playlist in Settings and this opens it directly."}</p>${backBtn()}`);
+  }
+  function spotifyApp(url) {
+    // open.spotify.com/playlist/ID?si=... -> spotify:playlist:ID, which opens the Spotify app itself
+    const m = /open\.spotify\.com\/(?:intl-[a-z-]+\/)?(playlist|album|artist|track|show|episode)\/([A-Za-z0-9]+)/.exec(url || "");
+    return m ? "spotify:" + m[1] + ":" + m[2] : "spotify:";
+  }
+  function friend() {
+    const fr = (S.settings.friends || []).filter((x) => x.trim());
+    const who = fr.length ? fr[Math.floor(Math.random() * fr.length)] : "someone you haven't talked to in a while";
+    const msg = PROMPTS[Math.floor(Math.random() * PROMPTS.length)];
+    stage(`<h2>Reach out</h2><p class="sub" style="font-size:14px">Text ${esc(who)}:</p><div class="say" id="say">“${esc(msg)}”</div>
+      <div class="row" style="justify-content:center"><a class="btn primary" href="sms:&body=${encodeURIComponent(msg)}">Open Messages</a><button class="btn" data-act="copy">Copy</button><button class="btn" data-act="friend">${fr.length > 1 ? "Someone else" : "Different message"}</button></div>
+      <p class="note" id="copyNote">${fr.length ? "" : "Add your people in Settings."}</p>${backBtn()}`);
+    $("stage").dataset.msg = msg;
+  }
+
+  // sudoku
+  let sdk = null;
+  function genSolved() {
+    const g = Array(81).fill(0);
+    const ok = (p, n) => { const r = Math.floor(p / 9), c = p % 9, br = r - r % 3, bc = c - c % 3;
+      for (let i = 0; i < 9; i++) { if (g[r * 9 + i] === n || g[i * 9 + c] === n || g[(br + Math.floor(i / 3)) * 9 + bc + i % 3] === n) return false; } return true; };
+    const fill = (p) => { if (p === 81) return true; const ns = [1,2,3,4,5,6,7,8,9].sort(() => Math.random() - 0.5);
+      for (const n of ns) { if (ok(p, n)) { g[p] = n; if (fill(p + 1)) return true; g[p] = 0; } } return false; };
+    fill(0); return g;
+  }
+  function newSudoku() {
+    const sol = genSolved(), puz = sol.slice();
+    [...Array(81).keys()].sort(() => Math.random() - 0.5).slice(0, 42).forEach((p) => { puz[p] = 0; });
+    sdk = { puz, vals: puz.slice(), sel: -1 };
+  }
+  const peers = (p) => { const r = Math.floor(p / 9), c = p % 9, br = r - r % 3, bc = c - c % 3, out = new Set();
+    for (let i = 0; i < 9; i++) { out.add(r * 9 + i); out.add(i * 9 + c); out.add((br + Math.floor(i / 3)) * 9 + bc + i % 3); } out.delete(p); return out; };
+  function sudoku() { if (!sdk) newSudoku(); drawSudoku(); }
+  function drawSudoku() {
+    const pe = sdk.sel >= 0 ? peers(sdk.sel) : new Set();
+    const bad = new Set();
+    sdk.vals.forEach((v, p) => { if (v && !sdk.puz[p] && [...peers(p)].some((q) => sdk.vals[q] === v)) bad.add(p); });
+    const left = sdk.vals.filter((v) => !v).length;
+    const status = bad.size ? `${bad.size} clash${bad.size === 1 ? "" : "es"}, marked in red.` : left ? `No clashes. ${left} to go.` : "Solved. Nice.";
+    stage(`<div class="sdk">${sdk.vals.map((v, p) => {
+        const c = p % 9, r = Math.floor(p / 9);
+        const cls = [sdk.puz[p] ? "given" : "", p === sdk.sel ? "sel" : pe.has(p) ? "peer" : "", bad.has(p) ? "bad" : "", c === 2 || c === 5 ? "c3" : "", r === 2 || r === 5 ? "r3" : ""].join(" ");
+        return `<button class="${cls}" data-cell="${p}" aria-label="Row ${r + 1} column ${c + 1}">${v || ""}</button>`; }).join("")}</div>
+      <div class="pad">${[1,2,3,4,5,6,7,8,9].map((n) => `<button data-num="${n}">${n}</button>`).join("")}<button data-num="0" aria-label="Erase">⌫</button></div>
+      <p class="note" style="color:${bad.size ? "var(--bad)" : left ? "var(--muted)" : "var(--good)"}">${status}</p>
+      <div class="row" style="justify-content:center"><button class="btn" data-act="newsdk">New puzzle</button>${backBtn()}</div>`);
+  }
+
+  function finish() {
+    clearInterval(ticker);
+    if (!active.done) { active.done = true; ls.set("urge.active", active); }
+    $("clock").textContent = "You made it."; $("clock").className = "clock done";
+    $("lockTitle").textContent = "That one passed.";
+    const ev = events().find((e) => e.id === active.id);
+    const cur = ev && ev.intensity;
+    stage(`<p class="sub" style="font-size:14px">How strong was the urge?</p>${scaleHTML(cur)}<button class="btn primary" data-act="unlock" style="font-size:17px;padding:14px 34px">Unlock</button>`);
+  }
+  function scaleHTML(cur) {
+    return `<div class="scale">${[1,2,3,4,5].map((n) => `<button data-rate="${n}" aria-pressed="${cur === n}"><b>${n}</b><span>${STRENGTH[n]}</span></button>`).join("")}</div>`;
+  }
+  function unlock() {
+    $("lock").hidden = true; document.body.style.overflow = "";
+    active = null; ls.del("urge.active"); sdk = null;
+    try { wake && wake.release(); } catch {}
+    try { document.fullscreenElement && document.exitFullscreen(); } catch {}
+    render();
+  }
+
+  $("stage").addEventListener("click", (e) => {
+    const b = e.target.closest("button"); if (!b) return;
+    if (b.dataset.opt) return choose(b.dataset.opt);
+    if (b.dataset.cell) { sdk.sel = Number(b.dataset.cell); return drawSudoku(); }
+    if (b.dataset.num != null && sdk && sdk.sel >= 0 && !sdk.puz[sdk.sel]) { sdk.vals[sdk.sel] = Number(b.dataset.num); return drawSudoku(); }
+    if (b.dataset.rate) {
+      const n = Number(b.dataset.rate);
+      updateEvent(active.id, (ev) => { ev.intensity = n; return ev; });
+      $("stage").querySelectorAll("[data-rate]").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+      return;
+    }
+    const act = b.dataset.act;
+    if (act === "back") options();
+    else if (act === "friend") friend();
+    else if (act === "newsdk") { newSudoku(); drawSudoku(); }
+    else if (act === "unlock") unlock();
+    else if (act === "copy") {
+      const msg = $("stage").dataset.msg, note = $("copyNote");
+      const done = () => { note.textContent = "Copied."; };
+      const fallback = () => { const r = document.createRange(); r.selectNodeContents($("say")); const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r); note.textContent = "Selected. Copy it from here."; };
+      try { navigator.clipboard.writeText(msg).then(done, fallback); } catch { fallback(); }
+    }
+  });
+  document.addEventListener("keydown", (e) => {
+    if ($("lock").hidden || !sdk || sdk.sel < 0 || !$("stage").querySelector(".sdk")) return;
+    if (/^[1-9]$/.test(e.key) && !sdk.puz[sdk.sel]) { sdk.vals[sdk.sel] = Number(e.key); drawSudoku(); }
+    if ((e.key === "Backspace" || e.key === "Delete") && !sdk.puz[sdk.sel]) { sdk.vals[sdk.sel] = 0; drawSudoku(); }
+  });
+  $("urgeBtn").addEventListener("click", startLock);
+
+  // ---------------------------------------------------------------- log one handled without the lock
+  $("logOwnBtn").addEventListener("click", () => {
+    const bg = document.createElement("div");
+    bg.className = "sheet-bg";
+    bg.innerHTML = `<div class="sheet" role="dialog" aria-label="Log an urge"><h2>Handled one on your own?</h2>
+      <p class="note">It still counts. How strong was it?</p>${scaleHTML(null)}
+      <div class="row" style="justify-content:flex-end"><button class="btn" data-act="cancel">Cancel</button><button class="btn primary" data-act="log">Log it</button></div></div>`;
+    let rating = null;
+    bg.addEventListener("click", (e) => {
+      if (e.target === bg) return bg.remove();
+      const b = e.target.closest("button"); if (!b) return;
+      if (b.dataset.rate) { rating = Number(b.dataset.rate); bg.querySelectorAll("[data-rate]").forEach((x) => x.setAttribute("aria-pressed", String(x === b))); }
+      if (b.dataset.act === "cancel") bg.remove();
+      if (b.dataset.act === "log") { addEvent({ id: uid(), t: Date.now(), kind: "logged", minutes: 0, choices: [], intensity: rating }); bg.remove(); }
+    });
+    document.body.appendChild(bg);
+  });
+
+  // ---------------------------------------------------------------- settings
+  function fillSettings() {
+    $("setMinutes").value = S.settings.lockMinutes;
+    $("setSpotify").value = S.settings.spotify || "";
+    $("setFriends").value = (S.settings.friends || []).join("\n");
+    $("setShortcut").value = S.settings.shortcut || "";
+  }
+  $("saveSettings").addEventListener("click", () => {
+    const m = Math.max(1, Math.min(30, parseInt($("setMinutes").value, 10) || 3));
+    const sp = $("setSpotify").value.trim();
+    S.settings = { lockMinutes: m, spotify: sp, shortcut: $("setShortcut").value.trim(), friends: $("setFriends").value.split("\n").map((x) => x.trim()).filter(Boolean) };
+    persistSettings(); fillSettings(); render();
+    $("savedNote").textContent = sp && !/^https:\/\/open\.spotify\.com\//.test(sp) ? "Saved. That Spotify link doesn't look like an open.spotify.com link." : "Saved.";
+  });
+
+  // ---------------------------------------------------------------- boot
+  fillSettings(); render();
+  if (active) showLock();
+  setInterval(() => { if ($("lock").hidden) render(); }, 30000);
+
+  function backupSub() { $("backupSub").textContent = plural(events().length, "urge") + " saved on this phone"; }
+  $("exportBtn").addEventListener("click", () => {
+    const body = JSON.stringify({ app: "urge-button", version: 1, months: S.months, settings: S.settings }, null, 2);
+    $("exportBtn").href = URL.createObjectURL(new Blob([body], { type: "application/json" }));
+    $("exportBtn").download = "urge-history-" + new Date().toISOString().slice(0, 10) + ".json";
+  });
+  $("importFile").addEventListener("change", async (e) => {
+    const f = e.target.files && e.target.files[0]; if (!f) return;
+    try {
+      const data = JSON.parse(await f.text());
+      if (!data || typeof data.months !== "object") throw new Error("not a backup");
+      let added = 0;
+      for (const [k, list] of Object.entries(data.months)) {
+        const have = new Set((S.months[k] || []).map((x) => x.id));
+        const extra = (list || []).filter((x) => x && x.id && !have.has(x.id));
+        added += extra.length;
+        S.months[k] = (S.months[k] || []).concat(extra);
+      }
+      ls.set("urge.months", S.months); render(); backupSub();
+      $("backupNote").textContent = "Restored " + plural(added, "urge") + ". Anything already here was kept.";
+    } catch { $("backupNote").textContent = "That file isn't an Urge Button backup."; }
+    e.target.value = "";
+  });
+  backupSub();
+  document.querySelector('nav.bar button[data-tab="settings"]').addEventListener("click", backupSub);
+
+  if (/[?&]start\b/.test(location.search) && !active) { history.replaceState(null, "", location.pathname); startLock(); }
+  if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
+})();
+</script>
+
+</body>
+</html>
