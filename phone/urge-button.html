@@ -110,6 +110,16 @@ nav.bar button[aria-current=true] { color: var(--text); background: var(--panel)
 .scale button span { font-size: 10.5px; color: var(--muted); min-height: 1.2em; }
 .scale button[aria-pressed=true] { background: var(--accent); }
 .scale button[aria-pressed=true] span { color: var(--text); }
+.why { background: var(--panel); border-radius: 14px; padding: 14px 16px; width: 100%; display: grid; gap: 6px; }
+.why img { width: 100%; max-height: 220px; object-fit: cover; border-radius: 10px; }
+.why .k { font-size: 11px; letter-spacing: .08em; color: var(--muted); font-weight: 700; }
+.why p { margin: 0; font-size: 16px; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; width: 100%; }
+.chips button { background: var(--panel-2); border-radius: 999px; padding: 9px 14px; font-size: 14px; }
+.chips button[aria-pressed=true] { background: var(--accent); }
+.calmer { color: var(--good); } .stronger { color: var(--warn); }
+.photo-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.photo-row img { width: 64px; height: 64px; object-fit: cover; border-radius: 10px; }
 
 /* Sudoku */
 .sdk { display: grid; grid-template-columns: repeat(9, 1fr); width: min(100%, 380px); aspect-ratio: 1; background: var(--muted); gap: 1px; padding: 2px; border-radius: 6px; }
@@ -159,7 +169,8 @@ nav.bar button[aria-current=true] { color: var(--text); background: var(--panel)
     <div class="card"><div><h3>Last 30 days</h3><p class="sub" id="monthSub"></p></div><div id="monthChart"></div></div>
     <div class="card"><div><h3>When urges hit</h3><p class="sub">Last 30 days by day and hour. Brighter means more.</p></div><div id="heatChart"></div></div>
     <div class="card"><div><h3>How strong they were</h3><p class="sub">Average rating per day. 1 is mild, 5 is intense.</p></div><div id="strengthChart"></div></div>
-    <div class="card"><div><h3>What you did instead</h3><p class="sub">Last 30 days</p></div><div id="choiceChart"></div></div>
+    <div class="card"><div><h3>What you did instead</h3><p class="sub">Last 30 days. On the right: how much calmer you were at unlock than at the start.</p></div><div id="choiceChart"></div></div>
+    <div class="card"><div><h3>What sets it off</h3><p class="sub">Last 30 days. Tap these in when a lock ends.</p></div><div id="triggerChart"></div></div>
   </section>
 
   <section class="tab" id="tab-settings" hidden>
@@ -170,6 +181,12 @@ nav.bar button[aria-current=true] { color: var(--text); background: var(--panel)
     <label class="f" for="setSpotify">Spotify playlist link (from Share, then Copy link)
       <input type="text" id="setSpotify" placeholder="https://open.spotify.com/playlist/..." autocomplete="off">
     </label>
+    <label class="f" for="setReasons">Your reasons, one per line. They show on the lock screen.
+      <textarea id="setReasons" placeholder="I want my evenings back."></textarea>
+    </label>
+    <div class="f" style="display:grid;gap:6px;font-size:13px;color:var(--muted)">Photo above your reasons (optional)
+      <div class="photo-row"><img id="photoPreview" alt="" hidden><label class="btn" for="setPhoto">Choose a photo</label><input type="file" id="setPhoto" accept="image/*" hidden><button class="btn" id="clearPhoto" hidden>Remove</button></div>
+    </div>
     <label class="f" for="setFriends">Friends to reach out to, one per line
       <textarea id="setFriends" placeholder="Sam&#10;Jordan"></textarea>
     </label>
@@ -189,6 +206,7 @@ nav.bar button[aria-current=true] { color: var(--text); background: var(--panel)
   <div class="lock-in">
     <h1 id="lockTitle">Breathe. This passes.</h1>
     <p class="sub" id="lockCount"></p>
+    <div class="why" id="why" hidden></div>
     <div class="clock" id="clock">3:00</div>
     <div class="stage" id="stage"></div>
   </div>
@@ -219,6 +237,9 @@ nav.bar button[aria-current=true] { color: var(--text); background: var(--panel)
   const HOURS = ["12a","1a","2a","3a","4a","5a","6a","7a","8a","9a","10a","11a","12p","1p","2p","3p","4p","5p","6p","7p","8p","9p","10p","11p"];
   const WD = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
   const STRENGTH = { 1: "mild", 2: "", 3: "medium", 4: "", 5: "intense" };
+  const TRIGGERS = ["Bored", "Stressed", "Lonely", "Tired", "Anxious", "Late night", "After gaming", "Something I saw", "Other"];
+  // how strong the urge was: the rating when it hit, else (older events) the rating at unlock
+  const strengthOf = (e) => typeof e.intensity_start === "number" ? e.intensity_start : typeof e.intensity === "number" ? e.intensity : null;
 
   // ---------------------------------------------------------------- storage
   const ls = {
@@ -327,13 +348,24 @@ nav.bar button[aria-current=true] { color: var(--text); background: var(--panel)
     const since30 = dayStart(now, 29);
     ev.forEach((e) => { if (e.t >= since30) { const d = new Date(e.t); heat[(d.getDay() + 6) % 7][d.getHours()]++; } });
     const strength = days(30).map((d) => {
-      const v = ev.filter((e) => e.t >= d && e.t < dayStart(d, -1) && typeof e.intensity === "number").map((e) => e.intensity);
+      const v = ev.filter((e) => e.t >= d && e.t < dayStart(d, -1) && strengthOf(e) != null).map(strengthOf);
       return { d, v: v.length ? v.reduce((a, b) => a + b, 0) / v.length : null };
     });
     const choices = { walk: 0, spotify: 0, sudoku: 0, friend: 0, on_own: 0 };
     ev.forEach((e) => { if (e.t < since30) return; if (e.kind === "logged") choices.on_own++; (e.choices || []).forEach((c) => { choices[c] = (choices[c] || 0) + 1; }); });
     const locks = ev.filter((e) => e.kind !== "logged").length;
-    return { ev, now, today, yday, week, lastWeek, last, longest, perDay, byHour, heat, strength, choices, locks };
+    const drops = {}, trig = {};
+    ev.forEach((e) => {
+      if (e.t < since30) return;
+      (e.triggers || []).forEach((t) => { trig[t] = (trig[t] || 0) + 1; });
+      if (typeof e.intensity_start === "number" && typeof e.intensity === "number") {
+        ((e.choices && e.choices.length) ? e.choices : ["none"]).forEach((c) => { (drops[c] = drops[c] || []).push(e.intensity_start - e.intensity); });
+      }
+    });
+    const relief = {};
+    Object.entries(drops).forEach(([c, v]) => { relief[c] = [v.reduce((a, b) => a + b, 0) / v.length, v.length]; });
+    const triggers = Object.entries(trig).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+    return { ev, now, today, yday, week, lastWeek, last, longest, perDay, byHour, heat, strength, choices, locks, relief, triggers };
   }
   function delta(a, b, unit) {
     const d = a - b;
@@ -406,17 +438,29 @@ nav.bar button[aria-current=true] { color: var(--text); background: var(--panel)
     [0, 14, 29].forEach((i) => { s += `<text x="${x(i)}" y="${H - 3}" fill="var(--muted)" font-size="10" text-anchor="${i === 0 ? "start" : i === 29 ? "end" : "middle"}">${fmtShort(series[i].d)}</text>`; });
     return s + "</svg>";
   }
-  function choiceBars(c) {
-    const rows = Object.entries(c), peak = Math.max(1, ...rows.map((r) => r[1]));
-    const W = 340, rh = 26, H = rows.length * rh, L = 150;
+  function hbars(rows, L, noteW) {
+    // rows: [label, count, note, noteColour]
+    const peak = Math.max(1, ...rows.map((r) => r[1]));
+    const W = 340, rh = 26, H = rows.length * rh;
     let s = `<svg viewBox="0 0 ${W} ${H}" role="img">`;
-    rows.forEach(([k, v], i) => {
-      const cy = i * rh + rh / 2, w = (W - L - 30) * v / peak;
-      s += `<text x="0" y="${cy + 4}" fill="var(--text)" font-size="12">${NAMES[k]}</text>`;
+    rows.forEach(([label, v, note, colour], i) => {
+      const cy = i * rh + rh / 2, w = (W - L - noteW - 26) * v / peak;
+      s += `<text x="0" y="${cy + 4}" fill="var(--text)" font-size="12">${esc(label)}</text>`;
       if (v) s += `<rect x="${L}" y="${cy - 6}" width="${w}" height="12" rx="3" fill="var(--accent-soft)"/>`;
       s += `<text x="${L + w + 6}" y="${cy + 4}" fill="var(--text)" font-size="12">${v}</text>`;
+      if (note) s += `<text x="${W}" y="${cy + 4}" fill="${colour}" font-size="10.5" text-anchor="end">${note}</text>`;
     });
     return s + "</svg>";
+  }
+  function choiceBars(c, relief) {
+    return hbars(Object.entries(c).map(([k, v]) => {
+      const r = relief[k];
+      if (!r) return [NAMES[k], v, "", ""];
+      const [d, n] = r;
+      if (d > 0.05) return [NAMES[k], v, `▼ ${d.toFixed(1)} calmer (${n})`, "var(--good)"];
+      if (d < -0.05) return [NAMES[k], v, `▲ ${(-d).toFixed(1)} stronger (${n})`, "var(--warn)"];
+      return [NAMES[k], v, `no change (${n})`, "var(--muted)"];
+    }), 128, 92);
   }
   const fmtDay = (t) => new Date(t).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" });
   const fmtShort = (t) => new Date(t).toLocaleDateString(undefined, { day: "numeric", month: "short" });
@@ -473,7 +517,9 @@ nav.bar button[aria-current=true] { color: var(--text); background: var(--panel)
       d30.map((p, i) => fmtDay(p.d) + "\n" + plural(p.n, "urge") + "\n7-day avg " + avg[i].toFixed(1)), new Set([29]), avg);
     $("heatChart").innerHTML = heatmap(s.heat);
     $("strengthChart").innerHTML = strengthLine(s.strength);
-    $("choiceChart").innerHTML = choiceBars(s.choices);
+    $("choiceChart").innerHTML = choiceBars(s.choices, s.relief);
+    $("triggerChart").innerHTML = s.triggers.length ? hbars(s.triggers.slice(0, 6).map(([t, n]) => [t, n, "", ""]), 110, 0)
+      : `<p class="empty">Nothing yet. Pick what set it off when a lock ends.</p>`;
   }
 
   // ---------------------------------------------------------------- tabs
@@ -490,7 +536,7 @@ nav.bar button[aria-current=true] { color: var(--text); background: var(--panel)
   function startLock() {
     if (active && !active.done) return showLock();
     const minutes = Math.max(1, Math.min(30, Number(S.settings.lockMinutes) || 3));
-    const ev = { id: uid(), t: Date.now(), kind: "lock", minutes, choices: [], intensity: null };
+    const ev = { id: uid(), t: Date.now(), kind: "lock", minutes, choices: [], intensity_start: null, intensity: null, triggers: [] };
     addEvent(ev);
     active = { id: ev.id, endAt: ev.t + minutes * 60000, done: false };
     ls.set("urge.active", active);
@@ -505,7 +551,9 @@ nav.bar button[aria-current=true] { color: var(--text); background: var(--panel)
     try { navigator.wakeLock && navigator.wakeLock.request("screen").then((w) => { wake = w; }).catch(() => {}); } catch {}
     if (active.done || Date.now() >= active.endAt) return finish();
     $("clock").className = "clock"; $("lockTitle").textContent = "Breathe. This passes.";
-    options();
+    renderWhy();
+    const cur = events().find((e) => e.id === active.id);
+    if (cur && cur.intensity_start == null) startRating(); else options();
     clearInterval(ticker); ticker = setInterval(tick, 250); tick();
   }
   function tick() {
@@ -517,7 +565,24 @@ nav.bar button[aria-current=true] { color: var(--text); background: var(--panel)
 
   function stage(html) { $("stage").innerHTML = html; }
   function backBtn() { return `<button class="btn" data-act="back">Back to the options</button>`; }
+  function renderWhy() {
+    const reasons = (S.settings.reasons || []).filter((r) => r.trim()).slice(0, 5);
+    const photo = S.settings.photo || "";
+    const why = $("why");
+    if (!reasons.length && !photo) { why.innerHTML = ""; why.hidden = true; return; }
+    why.innerHTML = (photo ? `<img src="${esc(photo)}" alt="">` : "") +
+      (reasons.length ? `<div class="k">WHY YOU'RE DOING THIS</div>` + reasons.map((r) => `<p>${esc(r)}</p>`).join("") : "");
+    why.hidden = false;
+  }
+  function showWhy(on) { if ($("why").innerHTML) $("why").hidden = !on; }
+  function startRating() {
+    stage(`<p class="sub" style="font-size:14px">How strong is it right now?</p>${scaleHTML(null, "start")}<button class="btn" data-act="back">Skip</button>`);
+  }
+  function chipsHTML(selected) {
+    return `<div class="chips">${TRIGGERS.map((t) => `<button data-trig="${esc(t)}" aria-pressed="${selected.includes(t)}">${esc(t)}</button>`).join("")}</div>`;
+  }
   function options() {
+    showWhy(true);
     stage(`<p class="sub">Pick one:</p><div class="opts">${OPTIONS.map(([k, t, d]) => `<button class="opt" data-opt="${k}"><b>${t}</b><span>${d}</span></button>`).join("")}</div>`);
   }
   function choose(k) {
@@ -559,7 +624,7 @@ nav.bar button[aria-current=true] { color: var(--text); background: var(--panel)
   }
   const peers = (p) => { const r = Math.floor(p / 9), c = p % 9, br = r - r % 3, bc = c - c % 3, out = new Set();
     for (let i = 0; i < 9; i++) { out.add(r * 9 + i); out.add(i * 9 + c); out.add((br + Math.floor(i / 3)) * 9 + bc + i % 3); } out.delete(p); return out; };
-  function sudoku() { if (!sdk) newSudoku(); drawSudoku(); }
+  function sudoku() { showWhy(false); if (!sdk) newSudoku(); drawSudoku(); }
   function drawSudoku() {
     const pe = sdk.sel >= 0 ? peers(sdk.sel) : new Set();
     const bad = new Set();
@@ -580,12 +645,16 @@ nav.bar button[aria-current=true] { color: var(--text); background: var(--panel)
     if (!active.done) { active.done = true; ls.set("urge.active", active); }
     $("clock").textContent = "You made it."; $("clock").className = "clock done";
     $("lockTitle").textContent = "That one passed.";
+    showWhy(false);
     const ev = events().find((e) => e.id === active.id);
     const cur = ev && ev.intensity;
-    stage(`<p class="sub" style="font-size:14px">How strong was the urge?</p>${scaleHTML(cur)}<button class="btn primary" data-act="unlock" style="font-size:17px;padding:14px 34px">Unlock</button>`);
+    stage(`<p class="sub" style="font-size:14px">How strong is it now?</p>${scaleHTML(cur)}
+      <p class="sub" style="font-size:14px;margin-top:8px">What set it off? Tap any that fit.</p>${chipsHTML((ev && ev.triggers) || [])}
+      <button class="btn primary" data-act="unlock" style="font-size:17px;padding:14px 34px;margin-top:6px">Unlock</button>`);
   }
-  function scaleHTML(cur) {
-    return `<div class="scale">${[1,2,3,4,5].map((n) => `<button data-rate="${n}" aria-pressed="${cur === n}"><b>${n}</b><span>${STRENGTH[n]}</span></button>`).join("")}</div>`;
+  function scaleHTML(cur, which) {
+    const attr = which === "start" ? "data-start" : "data-rate";
+    return `<div class="scale">${[1,2,3,4,5].map((n) => `<button ${attr}="${n}" aria-pressed="${cur === n}"><b>${n}</b><span>${STRENGTH[n]}</span></button>`).join("")}</div>`;
   }
   function unlock() {
     $("lock").hidden = true; document.body.style.overflow = "";
@@ -600,6 +669,18 @@ nav.bar button[aria-current=true] { color: var(--text); background: var(--panel)
     if (b.dataset.opt) return choose(b.dataset.opt);
     if (b.dataset.cell) { sdk.sel = Number(b.dataset.cell); return drawSudoku(); }
     if (b.dataset.num != null && sdk && sdk.sel >= 0 && !sdk.puz[sdk.sel]) { sdk.vals[sdk.sel] = Number(b.dataset.num); return drawSudoku(); }
+    if (b.dataset.start) {
+      const n = Number(b.dataset.start);
+      updateEvent(active.id, (ev) => { ev.intensity_start = n; return ev; });
+      $("stage").querySelectorAll("[data-start]").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+      return setTimeout(options, 250);
+    }
+    if (b.dataset.trig) {
+      const t = b.dataset.trig, on = b.getAttribute("aria-pressed") !== "true";
+      b.setAttribute("aria-pressed", String(on));
+      updateEvent(active.id, (ev) => { const s = new Set(ev.triggers || []); on ? s.add(t) : s.delete(t); ev.triggers = [...s].sort(); return ev; });
+      return;
+    }
     if (b.dataset.rate) {
       const n = Number(b.dataset.rate);
       updateEvent(active.id, (ev) => { ev.intensity = n; return ev; });
@@ -631,14 +712,20 @@ nav.bar button[aria-current=true] { color: var(--text); background: var(--panel)
     bg.className = "sheet-bg";
     bg.innerHTML = `<div class="sheet" role="dialog" aria-label="Log an urge"><h2>Handled one on your own?</h2>
       <p class="note">It still counts. How strong was it?</p>${scaleHTML(null)}
+      <p class="note">What set it off?</p>${chipsHTML([])}
       <div class="row" style="justify-content:flex-end"><button class="btn" data-act="cancel">Cancel</button><button class="btn primary" data-act="log">Log it</button></div></div>`;
     let rating = null;
     bg.addEventListener("click", (e) => {
       if (e.target === bg) return bg.remove();
       const b = e.target.closest("button"); if (!b) return;
       if (b.dataset.rate) { rating = Number(b.dataset.rate); bg.querySelectorAll("[data-rate]").forEach((x) => x.setAttribute("aria-pressed", String(x === b))); }
+      if (b.dataset.trig) b.setAttribute("aria-pressed", String(b.getAttribute("aria-pressed") !== "true"));
       if (b.dataset.act === "cancel") bg.remove();
-      if (b.dataset.act === "log") { addEvent({ id: uid(), t: Date.now(), kind: "logged", minutes: 0, choices: [], intensity: rating }); bg.remove(); }
+      if (b.dataset.act === "log") {
+        const triggers = [...bg.querySelectorAll('[data-trig][aria-pressed="true"]')].map((x) => x.dataset.trig).sort();
+        addEvent({ id: uid(), t: Date.now(), kind: "logged", minutes: 0, choices: [], intensity_start: rating, intensity: null, triggers });
+        bg.remove();
+      }
     });
     document.body.appendChild(bg);
   });
@@ -647,15 +734,39 @@ nav.bar button[aria-current=true] { color: var(--text); background: var(--panel)
   function fillSettings() {
     $("setMinutes").value = S.settings.lockMinutes;
     $("setSpotify").value = S.settings.spotify || "";
+    $("setReasons").value = (S.settings.reasons || []).join("\n");
+    $("photoPreview").src = S.settings.photo || "";
+    $("photoPreview").hidden = $("clearPhoto").hidden = !S.settings.photo;
     $("setFriends").value = (S.settings.friends || []).join("\n");
   }
   $("saveSettings").addEventListener("click", () => {
     const m = Math.max(1, Math.min(30, parseInt($("setMinutes").value, 10) || 3));
     const sp = $("setSpotify").value.trim();
-    S.settings = { lockMinutes: m, spotify: sp, friends: $("setFriends").value.split("\n").map((x) => x.trim()).filter(Boolean) };
+    S.settings = { lockMinutes: m, spotify: sp, friends: $("setFriends").value.split("\n").map((x) => x.trim()).filter(Boolean),
+      reasons: $("setReasons").value.split("\n").map((x) => x.trim()).filter(Boolean), photo: S.settings.photo || "" };
     persistSettings(); fillSettings(); render();
     $("savedNote").textContent = sp && !/^https:\/\/open\.spotify\.com\//.test(sp) ? "Saved. That Spotify link doesn't look like an open.spotify.com link." : "Saved.";
   });
+
+  // photo: shrink to ~720px JPEG so it fits comfortably in storage
+  $("setPhoto").addEventListener("change", (e) => {
+    const f = e.target.files && e.target.files[0]; if (!f) return;
+    const url = URL.createObjectURL(f), img = new Image();
+    img.onload = () => {
+      const scale = Math.min(1, 720 / Math.max(img.width, img.height));
+      const c = document.createElement("canvas");
+      c.width = Math.round(img.width * scale); c.height = Math.round(img.height * scale);
+      c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(url);
+      S.settings.photo = c.toDataURL("image/jpeg", 0.82);
+      persistSettings(); fillSettings();
+      $("savedNote").textContent = "Photo saved.";
+    };
+    img.onerror = () => { $("savedNote").textContent = "That photo couldn't be read. Try a JPEG or PNG."; };
+    img.src = url;
+    e.target.value = "";
+  });
+  $("clearPhoto").addEventListener("click", () => { S.settings.photo = ""; persistSettings(); fillSettings(); });
 
   // ---------------------------------------------------------------- boot
   fillSettings(); render();

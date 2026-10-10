@@ -26,6 +26,8 @@ DEFAULT_CONFIG = {
     "button_monitor": None,      # Windows device name; None = the main monitor
     "button_anchor": "bottom-right",  # a placement.ANCHORS key, or "custom" after a drag
     "lock_monitor": None,        # where the lock-screen message shows; None = the main monitor
+    "reasons": [],               # your own lines, shown on the lock screen
+    "reason_image": "",          # optional PNG/GIF shown above them
 }
 
 OPTIONS = [
@@ -35,6 +37,17 @@ OPTIONS = [
     ("friend", "Reach out to a friend", "Send someone a message."),
 ]
 OPTION_NAMES = {key: title for key, title, _ in OPTIONS}
+
+TRIGGERS = ["Bored", "Stressed", "Lonely", "Tired", "Anxious", "Late night", "After gaming", "Something I saw", "Other"]
+
+
+def strength(event):
+    """How strong the urge was: the rating at the start when there is one, else the end rating."""
+    for key in ("intensity_start", "intensity"):
+        v = event.get(key)
+        if isinstance(v, (int, float)):
+            return v
+    return None
 
 
 def load_json(path, default):
@@ -107,13 +120,15 @@ class EventLog:
 
     # -- writing
 
-    def _add(self, kind, minutes, intensity=None):
+    def _add(self, kind, minutes, intensity_start=None, triggers=None):
         event = {
             "ts": self.now().isoformat(timespec="seconds"),
             "kind": kind,
             "minutes": minutes,
             "choices": [],
-            "intensity": intensity,
+            "intensity_start": intensity_start,  # how strong when it hit
+            "intensity": None,                   # how strong when the lock ended
+            "triggers": list(triggers or []),
         }
         self.events.append(event)
         self.save()
@@ -122,8 +137,16 @@ class EventLog:
     def record_press(self, minutes):
         return self._add("lock", minutes)
 
-    def record_logged(self, intensity=None):
-        return self._add("logged", 0, intensity)
+    def record_logged(self, intensity=None, triggers=None):
+        return self._add("logged", 0, intensity, triggers)
+
+    def record_start_intensity(self, event, intensity):
+        event["intensity_start"] = int(intensity)
+        self.save()
+
+    def record_triggers(self, event, triggers):
+        event["triggers"] = list(triggers)
+        self.save()
 
     def record_choice(self, event, choice):
         if choice not in event["choices"]:
@@ -220,10 +243,36 @@ class EventLog:
         today = self.now().date()
         buckets = {today - timedelta(days=i): [] for i in range(days)}
         for t, e in self.times():
-            v = e.get("intensity")
-            if t.date() in buckets and isinstance(v, (int, float)):
+            v = strength(e)
+            if t.date() in buckets and v is not None:
                 buckets[t.date()].append(v)
         return [(d, sum(v) / len(v) if v else None) for d, v in sorted(buckets.items())]
+
+    def _since(self, days):
+        return None if days is None else start_of_day(self.now()) - timedelta(days=days - 1)
+
+    def relief_by_choice(self, days=None):
+        """{choice: (average drop from start to end rating, times measured)} - how much each option helped."""
+        since = self._since(days)
+        drops = {}
+        for t, e in self.times():
+            a, b = e.get("intensity_start"), e.get("intensity")
+            if (since and t < since) or not isinstance(a, (int, float)) or not isinstance(b, (int, float)):
+                continue
+            for c in e.get("choices", []) or ["none"]:
+                drops.setdefault(c, []).append(a - b)
+        return {c: (sum(v) / len(v), len(v)) for c, v in drops.items()}
+
+    def trigger_counts(self, days=None):
+        """[(trigger, count)] most common first, only triggers that came up."""
+        since = self._since(days)
+        counts = {}
+        for t, e in self.times():
+            if since and t < since:
+                continue
+            for trig in e.get("triggers", []) or []:
+                counts[trig] = counts.get(trig, 0) + 1
+        return sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
 
     def choice_counts(self, days=None):
         since = None if days is None else start_of_day(self.now()) - timedelta(days=days - 1)

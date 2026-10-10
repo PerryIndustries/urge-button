@@ -163,19 +163,41 @@ def intensity_chart(c, tip, box, series):
                       fill=MUTED, font=(FONT, 10))
 
 
-def choice_bars(c, box, counts):
+def hbars(c, box, rows, label_w=170, note_w=110):
+    """rows: [(name, count, note, note_colour)] - one horizontal bar each, count after the bar, note at the right."""
     x, y, w, h = box
-    rows = [(OPTION_NAMES.get(k, "Handled it on my own"), v) for k, v in counts.items()]
-    peak = max((v for _, v in rows), default=0) or 1
-    lw = px(170)
-    rh = min(px(34), h / max(len(rows), 1))
-    for i, (name, v) in enumerate(rows):
+    peak = max((r[1] for r in rows), default=0) or 1
+    lw, nw = px(label_w), px(note_w)
+    rh = min(px(30), h / max(len(rows), 1))
+    for i, (name, v, note, note_colour) in enumerate(rows):
         cy = y + i * rh + rh / 2
         c.create_text(x, cy, text=name, fill=TEXT, font=(FONT, 10), anchor="w")
-        bar_w = (w - lw - px(40)) * v / peak
+        bar_w = (w - lw - nw - px(30)) * v / peak
         if v:
             c.create_rectangle(x + lw, cy - px(7), x + lw + bar_w, cy + px(7), fill=ACCENT_SOFT, outline="")
         c.create_text(x + lw + bar_w + px(8), cy, text=str(v), fill=TEXT, font=(FONT, 10), anchor="w")
+        if note:
+            c.create_text(x + w, cy, text=note, fill=note_colour, font=(FONT, 9), anchor="e")
+
+
+def relief_note(relief, key):
+    """'↓ 1.8 calmer' style note from start-vs-end ratings, or '' when never measured."""
+    if key not in relief:
+        return "", MUTED
+    drop, n = relief[key]
+    if drop > 0.05:
+        return f"▼ {drop:.1f} calmer ({n})", GOOD
+    if drop < -0.05:
+        return f"▲ {-drop:.1f} stronger ({n})", WARN
+    return f"no change ({n})", MUTED
+
+
+def choice_rows(counts, relief):
+    rows = []
+    for k, v in counts.items():
+        note, colour = relief_note(relief, k)
+        rows.append((OPTION_NAMES.get(k, "Handled it on my own"), v, note, colour))
+    return rows
 
 
 def delta_line(now, before, unit):
@@ -272,18 +294,29 @@ class ProgressWindow:
 
         # Strength trend
         c, tip = self.canvas(left, LW, px(190))
-        titled(c, "How strong the urges were", "average rating per day, 1 = mild, 5 = intense")
+        titled(c, "How strong the urges were", "average rating when they hit, per day · 1 = mild, 5 = intense")
         intensity_chart(c, tip, (px(10), px(62), LW - px(26), px(118)), log.intensity_per_day(30))
 
         # When urges hit
-        c, tip = self.canvas(right, RW, px(270))
+        c, tip = self.canvas(right, RW, px(240))
         titled(c, "When urges hit", "last 30 days by day and hour · brighter = more")
-        heatmap(c, tip, (px(10), px(62), RW - px(24), px(200)), log.heat(30))
+        heatmap(c, tip, (px(10), px(60), RW - px(24), px(172)), log.heat(30))
 
-        # What you did
-        c, tip = self.canvas(right, RW, px(340))
-        titled(c, "What you did instead", "last 30 days")
-        choice_bars(c, (px(16), px(66), RW - px(32), px(250)), log.choice_counts(30))
+        # What you did, and whether it helped
+        c, tip = self.canvas(right, RW, px(222))
+        titled(c, "What you did instead", "last 30 days · right side: how much calmer at unlock than at the start")
+        hbars(c, (px(16), px(62), RW - px(32), px(150)), choice_rows(log.choice_counts(30), log.relief_by_choice(30)),
+              label_w=160, note_w=120)
+
+        # What sets it off
+        c, tip = self.canvas(right, RW, px(200))
+        titled(c, "What sets it off", "last 30 days · tap these in when the lock ends")
+        trig = log.trigger_counts(30)[:5]
+        if trig:
+            hbars(c, (px(16), px(62), RW - px(32), px(130)), [(n, v, "", MUTED) for n, v in trig], label_w=130, note_w=0)
+        else:
+            c.create_text(RW / 2, px(120), text="Nothing yet. Pick what set it off when a lock ends.",
+                          fill=MUTED, font=(FONT, 10))
 
         self.win.after(60_000, self._refresh)
 
@@ -312,8 +345,14 @@ def fake_log(path, days=40, seed=7):
                 continue
             kind = "logged" if rng.random() < 0.2 else "lock"
             choices = [] if kind == "logged" else rng.sample(["walk", "spotify", "sudoku", "friend"], rng.choice([0, 1, 1, 2]))
-            intensity = None if rng.random() < 0.2 else max(1, min(5, round(rng.gauss(2 + back / 20, 1))))
+            start = None if rng.random() < 0.2 else max(1, min(5, round(rng.gauss(2.5 + back / 20, 1))))
+            help_ = {"walk": 2, "friend": 1.5, "spotify": 1, "sudoku": 0.5}
+            drop = max([help_.get(ch, 0.3) for ch in choices] or [0.3]) + rng.gauss(0, 0.6)
+            finish = None if start is None or kind == "logged" else max(1, min(5, round(start - drop)))
+            triggers = rng.sample(["Bored", "Stressed", "Lonely", "Tired", "Late night", "After gaming"],
+                                  rng.choice([0, 1, 1, 2]))
             log.events.append({"ts": t.isoformat(timespec="seconds"), "kind": kind, "minutes": 3,
-                               "choices": choices, "intensity": intensity})
+                               "choices": choices, "intensity_start": start, "intensity": finish,
+                               "triggers": triggers})
     log.save()
     return log

@@ -105,3 +105,25 @@ def test_key_blocker_rules():
     assert block(VK_ESCAPE, False, True)
     assert not block(VK_TAB, False, False)
     assert not block(ord("A"), False, False)
+
+
+def test_relief_by_choice_and_triggers(tmp_path):
+    log = make_log(tmp_path, [NOW - timedelta(hours=3), NOW - timedelta(hours=2), NOW - timedelta(hours=1)])
+    a, b, c = log.events
+    for e, start, end, choice in ((a, 4, 1, "walk"), (b, 4, 3, "walk"), (c, 2, 3, "sudoku")):
+        log.record_start_intensity(e, start)
+        log.record_intensity(e, end)
+        log.record_choice(e, choice)
+    log.record_triggers(a, ["Bored", "Tired"])
+    log.record_triggers(b, ["Bored"])
+    relief = log.relief_by_choice()
+    assert relief["walk"] == (2.0, 2)
+    assert relief["sudoku"] == (-1.0, 1)
+    assert log.trigger_counts() == [("Bored", 2), ("Tired", 1)]
+
+
+def test_strength_prefers_the_start_rating(tmp_path):
+    from urge_log import strength
+    assert strength({"intensity_start": 4, "intensity": 2}) == 4
+    assert strength({"intensity": 2}) == 2  # events from before start ratings existed
+    assert strength({}) is None

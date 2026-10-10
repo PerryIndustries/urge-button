@@ -32,7 +32,7 @@ from sudoku import check as check_sudoku
 from sudoku import make_puzzle
 from theme import ACCENT, BAD, BG, FONT, GOOD, MUTED, PANEL, PANEL_HI, TEXT, button, px
 from urge_log import (
-    CONFIG_PATH, MAX_LOCK_MINUTES, OPTIONS, EventLog, clamp_minutes, format_gap, load_config,
+    CONFIG_PATH, MAX_LOCK_MINUTES, OPTIONS, TRIGGERS, EventLog, clamp_minutes, format_gap, load_config,
     save_json, to_spotify_uri,
 )
 
@@ -77,6 +77,35 @@ def intensity_picker(master, on_pick, selected=None):
     if selected:
         pick(selected)
     return row
+
+
+def trigger_chips(master, selected, on_change, per_row=5):
+    """Tap-to-toggle chips for what set the urge off. `selected` is a set that gets updated in place."""
+    box = tk.Frame(master, bg=BG)
+    for i, name in enumerate(TRIGGERS):
+        chip = tk.Label(box, text=name, font=(FONT, 11), fg=TEXT, padx=14, pady=7, cursor="hand2",
+                        bg=ACCENT if name in selected else PANEL_HI)
+        chip.grid(row=i // per_row, column=i % per_row, padx=3, pady=3, sticky="ew")
+
+        def toggle(e, name=name, chip=chip):
+            selected.symmetric_difference_update({name})
+            chip.config(bg=ACCENT if name in selected else PANEL_HI)
+            on_change(selected)
+
+        chip.bind("<Button-1>", toggle)
+    return box
+
+
+def load_photo(path, max_h):
+    """A PNG/GIF scaled down to at most max_h pixels tall, or None. Tk reads both without extra libraries."""
+    if not path or not Path(path).is_file():
+        return None
+    try:
+        img = tk.PhotoImage(file=path)
+    except tk.TclError:
+        return None
+    factor = max(1, -(-img.height() // max_h))
+    return img.subsample(factor, factor) if factor > 1 else img
 
 
 # --------------------------------------------------------------------------- sudoku board
@@ -181,12 +210,15 @@ class LockScreen:
         tk.Label(self.body, text="Breathe. This passes.", font=(FONT, 30, "bold"), fg=TEXT, bg=BG).pack()
         tk.Label(self.body, text=f"Urge #{app.log.today()} today  ·  {app.log.this_week()} this week",
                  font=(FONT, 13), fg=MUTED, bg=BG).pack(pady=(6, 0))
+        self.why = self.build_why()
         self.clock = tk.Label(self.body, text="", font=(FONT, 64, "bold"), fg=ACCENT, bg=BG)
         self.clock.pack(pady=(10, 18))
+        if self.why:
+            self.why.pack(before=self.clock, pady=(16, 0))
 
         self.stage = tk.Frame(self.body, bg=BG)
         self.stage.pack()
-        self.show_options()
+        self.show_start_rating()
 
         self.tick()
         if not preview:
@@ -203,7 +235,44 @@ class LockScreen:
     def heading(self, text):
         tk.Label(self.stage, text=text, font=(FONT, 20, "bold"), fg=TEXT, bg=BG).pack()
 
+    def build_why(self):
+        """Your own reasons (and photo) from Settings, in a card above the clock. None when there are none."""
+        reasons = [r for r in self.app.config.get("reasons", []) if r.strip()][:5]
+        self.photo = load_photo(self.app.config.get("reason_image"), px(200))
+        if not reasons and not self.photo:
+            return None
+        card = tk.Frame(self.body, bg=PANEL, padx=px(24), pady=px(14))
+        if self.photo:
+            tk.Label(card, image=self.photo, bg=PANEL).pack(pady=(0, px(10) if reasons else 0))
+        if reasons:
+            tk.Label(card, text="WHY YOU'RE DOING THIS", font=(FONT, 9, "bold"), fg=MUTED, bg=PANEL).pack()
+            for r in reasons:
+                tk.Label(card, text=r, font=(FONT, 15), fg=TEXT, bg=PANEL, wraplength=px(760)).pack(pady=(px(4), 0))
+        return card
+
+    def show_why(self, visible):
+        if not self.why:
+            return
+        if visible and not self.why.winfo_ismapped():
+            self.why.pack(before=self.clock, pady=(16, 0))
+        elif not visible:
+            self.why.pack_forget()
+
+    def show_start_rating(self):
+        if self.event.get("intensity_start") is not None:
+            return self.show_options()
+        self.clear_stage()
+        tk.Label(self.stage, text="How strong is it right now?", font=(FONT, 14), fg=MUTED, bg=BG).pack(pady=(0, 10))
+
+        def picked(n):
+            self.app.log.record_start_intensity(self.event, n)
+            self.win.after(250, self.show_options)
+
+        intensity_picker(self.stage, picked).pack()
+        button(self.stage, "Skip", self.show_options).pack(pady=(px(16), 0))
+
     def show_options(self):
+        self.show_why(True)
         self.clear_stage()
         tk.Label(self.stage, text="Pick one:", font=(FONT, 14), fg=MUTED, bg=BG).pack(pady=(0, 10))
         row = tk.Frame(self.stage, bg=BG)
@@ -260,6 +329,7 @@ class LockScreen:
         self.back_row()
 
     def show_sudoku(self):
+        self.show_why(False)  # the board needs the height
         self.clear_stage()
         SudokuBoard(self.stage).pack()
         self.back_row()
@@ -311,10 +381,15 @@ class LockScreen:
         if self.blocker:
             self.blocker.stop()
         self.clock.config(text="You made it.", fg=GOOD, font=(FONT, 48, "bold"))
+        self.show_why(False)
         self.clear_stage()
-        tk.Label(self.stage, text="How strong was the urge?", font=(FONT, 14), fg=MUTED, bg=BG).pack(pady=(0, 10))
+        tk.Label(self.stage, text="How strong is it now?", font=(FONT, 14), fg=MUTED, bg=BG).pack(pady=(0, 10))
         intensity_picker(self.stage, lambda n: self.app.log.record_intensity(self.event, n),
                          self.event.get("intensity")).pack()
+        tk.Label(self.stage, text="What set it off? Tap any that fit.", font=(FONT, 14), fg=MUTED,
+                 bg=BG).pack(pady=(px(22), 8))
+        self.triggers = set(self.event.get("triggers") or [])
+        trigger_chips(self.stage, self.triggers, lambda s: self.app.log.record_triggers(self.event, sorted(s))).pack()
         button(self.stage, "Unlock", self.close, primary=True, size=16).pack(pady=(px(24), 0))
 
     def close(self):
@@ -341,11 +416,14 @@ class LogOwnWindow:
     def __init__(self, app):
         self.app = app
         self.intensity = None
+        self.triggers = set()
         w = self.win = small_window(app, "Urge Button - Log an urge")
         tk.Label(w, text="Handled one on your own?", font=(FONT, 16, "bold"), fg=TEXT, bg=BG).pack(anchor="w")
         tk.Label(w, text="It still counts - logging it keeps the picture honest. How strong was it?",
                  font=(FONT, 10), fg=MUTED, bg=BG).pack(anchor="w", pady=(2, 12))
         intensity_picker(w, self._pick).pack(anchor="w")
+        tk.Label(w, text="What set it off?", font=(FONT, 10), fg=MUTED, bg=BG).pack(anchor="w", pady=(14, 6))
+        trigger_chips(w, self.triggers, lambda s: None, per_row=3).pack(anchor="w")
         bar = tk.Frame(w, bg=BG)
         bar.pack(fill="x", pady=(16, 0))
         button(bar, "Log it", self.save, primary=True).pack(side="right")
@@ -355,7 +433,7 @@ class LogOwnWindow:
         self.intensity = n
 
     def save(self):
-        self.app.log.record_logged(self.intensity)
+        self.app.log.record_logged(self.intensity, sorted(self.triggers))
         self.app.refresh_counts()
         self.win.destroy()
 
@@ -364,42 +442,72 @@ class SettingsWindow:
     def __init__(self, app):
         self.app = app
         w = self.win = small_window(app, "Urge Button - Settings")
+        cols = tk.Frame(w, bg=BG)
+        cols.pack(fill="both")
+        left = tk.Frame(cols, bg=BG)
+        left.pack(side="left", anchor="n", padx=(0, px(28)))
+        right = tk.Frame(cols, bg=BG)
+        right.pack(side="left", anchor="n")
 
-        def label(text):
-            tk.Label(w, text=text, font=(FONT, 11), fg=MUTED, bg=BG, anchor="w").pack(fill="x", pady=(10, 2))
+        def label(parent, text, top=10):
+            tk.Label(parent, text=text, font=(FONT, 11), fg=MUTED, bg=BG, anchor="w").pack(fill="x", pady=(top, 2))
 
-        self.build_placement(w)
-        tk.Frame(w, bg=PANEL_HI, height=1).pack(fill="x", pady=(16, 4))
+        # Left: where things go, startup
+        self.build_placement(left)
+        tk.Frame(left, bg=PANEL_HI, height=1).pack(fill="x", pady=(16, 4))
+        self.startup = tk.BooleanVar(value=winapi.starts_with_windows())
+        tk.Checkbutton(left, text="Start with Windows", variable=self.startup, font=(FONT, 11), fg=TEXT, bg=BG,
+                       selectcolor=PANEL, activebackground=BG, activeforeground=TEXT).pack(anchor="w", pady=(8, 0))
+        hotkey = "Ctrl+Alt+U also triggers the lock from anywhere." if app.hotkey_ok else \
+            "Ctrl+Alt+U is taken by another app, so only the button works."
+        tk.Label(left, text=hotkey, font=(FONT, 10), fg=MUTED, bg=BG, anchor="w").pack(fill="x", pady=(6, 0))
 
-        label(f"Lock length (minutes, 1-{MAX_LOCK_MINUTES})")
-        self.minutes = tk.Spinbox(w, from_=1, to=MAX_LOCK_MINUTES, width=6, font=(FONT, 12), **FIELD,
-                                 buttonbackground=PANEL_HI)
+        # Right: the lock itself
+        tk.Label(right, text="The lock", font=(FONT, 13, "bold"), fg=TEXT, bg=BG, anchor="w").pack(fill="x")
+        label(right, f"Lock length (minutes, 1-{MAX_LOCK_MINUTES})", top=6)
+        self.minutes = tk.Spinbox(right, from_=1, to=MAX_LOCK_MINUTES, width=6, font=(FONT, 12), **FIELD,
+                                  buttonbackground=PANEL_HI)
         self.minutes.delete(0, "end")
         self.minutes.insert(0, str(app.config["lock_minutes"]))
         self.minutes.pack(anchor="w")
 
-        label("Spotify link (playlist URL or spotify:playlist:... - blank just opens Spotify)")
-        self.spotify = tk.Entry(w, width=56, font=(FONT, 11), **FIELD)
+        label(right, "Your reasons, one per line. They show on the lock screen.")
+        self.reasons = tk.Text(right, width=46, height=4, font=(FONT, 11), padx=6, pady=4, wrap="word", **FIELD)
+        self.reasons.insert("1.0", "\n".join(app.config.get("reasons", [])))
+        self.reasons.pack(anchor="w")
+
+        label(right, "Photo above your reasons (PNG or GIF, optional)")
+        row = tk.Frame(right, bg=BG)
+        row.pack(fill="x")
+        self.image = tk.Entry(row, width=34, font=(FONT, 10), **FIELD)
+        self.image.insert(0, app.config.get("reason_image", ""))
+        self.image.pack(side="left", fill="x", expand=True, ipady=4)
+        button(row, "Choose...", self.choose_image, size=10).pack(side="left", padx=(6, 0))
+        button(row, "Clear", lambda: self.image.delete(0, "end"), size=10).pack(side="left", padx=(4, 0))
+
+        label(right, "Spotify playlist link (blank just opens Spotify)")
+        self.spotify = tk.Entry(right, width=46, font=(FONT, 11), **FIELD)
         uri = app.config.get("spotify_uri", "")
         self.spotify.insert(0, "" if uri == "spotify:" else uri)
-        self.spotify.pack(anchor="w")
+        self.spotify.pack(anchor="w", ipady=3)
 
-        label("Friends to reach out to (one per line)")
-        self.friends = tk.Text(w, width=40, height=6, font=(FONT, 11), padx=6, pady=4, **FIELD)
+        label(right, "Friends to reach out to (one per line)")
+        self.friends = tk.Text(right, width=46, height=4, font=(FONT, 11), padx=6, pady=4, **FIELD)
         self.friends.insert("1.0", "\n".join(app.config.get("friends", [])))
         self.friends.pack(anchor="w")
 
-        self.startup = tk.BooleanVar(value=winapi.starts_with_windows())
-        tk.Checkbutton(w, text="Start with Windows", variable=self.startup, font=(FONT, 11), fg=TEXT, bg=BG,
-                       selectcolor=PANEL, activebackground=BG, activeforeground=TEXT).pack(anchor="w", pady=(12, 0))
-        hotkey = "Ctrl+Alt+U also triggers the lock from anywhere." if app.hotkey_ok else \
-            "Ctrl+Alt+U is taken by another app, so only the button works."
-        tk.Label(w, text=hotkey, font=(FONT, 10), fg=MUTED, bg=BG, anchor="w").pack(fill="x", pady=(6, 0))
-
         bar = tk.Frame(w, bg=BG)
-        bar.pack(fill="x", pady=(14, 0))
+        bar.pack(fill="x", pady=(16, 0))
         button(bar, "Save", self.save, primary=True).pack(side="right")
         button(bar, "Cancel", w.destroy).pack(side="right", padx=6)
+
+    def choose_image(self):
+        from tkinter import filedialog
+        path = filedialog.askopenfilename(parent=self.win, title="Choose a photo",
+                                          filetypes=[("Images", "*.png *.gif"), ("All files", "*.*")])
+        if path:
+            self.image.delete(0, "end")
+            self.image.insert(0, path)
 
     # -- where the button and the lock message go (these apply straight away)
 
@@ -478,6 +586,8 @@ class SettingsWindow:
         cfg["lock_minutes"] = clamp_minutes(self.minutes.get())
         cfg["spotify_uri"] = to_spotify_uri(self.spotify.get().strip())
         cfg["friends"] = [f.strip() for f in self.friends.get("1.0", "end").splitlines() if f.strip()]
+        cfg["reasons"] = [r.strip() for r in self.reasons.get("1.0", "end").splitlines() if r.strip()]
+        cfg["reason_image"] = self.image.get().strip()
         self.app.save_config()
         if self.startup.get() != winapi.starts_with_windows():
             winapi.set_start_with_windows(self.startup.get())
@@ -639,6 +749,8 @@ def run_preview(out_dir, stage):
 
     out = Path(out_dir)
     app = App(log=fake_log(out / "preview-events.json"), hotkey=False)
+    app.save_config = lambda: None  # previews never touch the real settings
+    app.config["reasons"] = ["I want my evenings back.", "Future me is proud of every one of these."]
     target = None
     if stage == "progress":
         target = ProgressWindow(app.root, app.log).win
@@ -654,7 +766,11 @@ def run_preview(out_dir, stage):
         target = app.lock.win
         if stage == "finish":
             app.lock.finish()
-        elif stage != "options":
+        elif stage == "start":
+            pass
+        elif stage == "options":
+            app.lock.show_options()
+        else:
             getattr(app.lock, f"show_{stage}")()
 
     def shoot():
