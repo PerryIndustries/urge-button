@@ -23,10 +23,16 @@ PEER = "#1B1E29"
 BOX_LINE = "#5A606A"
 ACCENT_BRIGHT = "#9AA2FF"
 
+# The Bored button and its charts: a calmer teal next to the urge purple.
+CALM = "#2A7F77"
+CALM_SOFT = "#2C5F5A"
+
 # Sequential ramp for the heatmap: one hue, dark -> light on the dark surface.
 HEAT_LOW = "#262A52"
 HEAT_HIGH = "#C3C8FF"
 HEAT_ZERO = "#1D1F22"
+HEAT_CALM_LOW = "#1F4A46"   # the same ramp in the Bored teal
+HEAT_CALM_HIGH = "#A8EFE3"
 
 SCALE = 1.0  # set from the screen DPI at startup so pixel sizes track font sizes
 

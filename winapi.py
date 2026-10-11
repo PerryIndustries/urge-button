@@ -106,22 +106,27 @@ class KeyBlocker:
 
 
 class Hotkey:
-    """Ctrl+Alt+U from anywhere (including a full-screen game). Presses land in `self.presses`."""
+    """Ctrl+Alt+<key> from anywhere (including a full-screen game), one hotkey per (key, name) pair.
 
-    def __init__(self, key="U"):
-        self.key = key
+    Each press lands in `self.presses` as its name. `ok` says which ones Windows let us register (another
+    app may already own one).
+    """
+
+    def __init__(self, keys=(("U", "urge"),)):
+        self.keys = list(keys)
         self.presses = queue.Queue()
-        self.ok = False
+        self.ok = {}
         self._ready = threading.Event()
 
     def _run(self):
-        self.ok = bool(user32.RegisterHotKey(None, 1, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, ord(self.key)))
+        for i, (key, name) in enumerate(self.keys, start=1):
+            self.ok[name] = bool(user32.RegisterHotKey(None, i, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, ord(key)))
         self._ready.set()
-        if not self.ok:
+        if not any(self.ok.values()):
             return
         for msg in _message_loop():
-            if msg.message == WM_HOTKEY:
-                self.presses.put(True)
+            if msg.message == WM_HOTKEY and 1 <= int(msg.wParam) <= len(self.keys):
+                self.presses.put(self.keys[int(msg.wParam) - 1][1])
 
     def start(self):
         threading.Thread(target=self._run, daemon=True).start()

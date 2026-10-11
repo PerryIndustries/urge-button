@@ -5,10 +5,10 @@ import tkinter as tk
 from datetime import timedelta
 
 from theme import (
-    ACCENT, ACCENT_SOFT, BG, CHART_BG, FONT, GOOD, GRID, HEAT_HIGH, HEAT_LOW, HEAT_ZERO, MUTED,
-    PANEL, TEXT, WARN, button, mix, px,
+    ACCENT, ACCENT_SOFT, BG, CALM, CALM_SOFT, CHART_BG, FONT, GOOD, GRID, HEAT_CALM_HIGH, HEAT_CALM_LOW, HEAT_HIGH,
+    HEAT_LOW, HEAT_ZERO, MUTED, PANEL, TEXT, WARN, button, mix, px,
 )
-from urge_log import OPTION_NAMES, format_gap
+from urge_log import BORED_URGE_WINDOW_MINUTES, OPTION_NAMES, bored_name, format_gap
 
 HOURS = ["12a", "1a", "2a", "3a", "4a", "5a", "6a", "7a", "8a", "9a", "10a", "11a",
          "12p", "1p", "2p", "3p", "4p", "5p", "6p", "7p", "8p", "9p", "10p", "11p"]
@@ -61,7 +61,9 @@ def titled(canvas, title, subtitle):
     canvas.create_text(px(16), px(36), text=subtitle, fill=MUTED, font=(FONT, 9), anchor="nw")
 
 
-def bar_chart(c, tip, box, values, xlabels, tips, highlight=(), line=None, line_label=None):
+def bar_chart(c, tip, box, values, xlabels, tips, highlight=(), line=None, line_label=None,
+              colours=(ACCENT_SOFT, ACCENT)):
+    """colours: (bar, highlighted bar) - the urge purple by default, the calm teal for the Bored charts."""
     x, y, w, h = box
     pl, pr, pt, pb = x + px(30), x + w, y, y + h - px(18)
     top, step = nice_scale(max(max(values), max((v for v in (line or []) if v is not None), default=0), 1))
@@ -80,7 +82,7 @@ def bar_chart(c, tip, box, values, xlabels, tips, highlight=(), line=None, line_
         top_y = pb
         if v > 0:
             top_y = pb - v / top * (pb - pt)
-            c.create_rectangle(x0 + 1, top_y, x1 - 1, pb, fill=ACCENT if i in highlight else ACCENT_SOFT,
+            c.create_rectangle(x0 + 1, top_y, x1 - 1, pb, fill=colours[1] if i in highlight else colours[0],
                                outline="", tags=tag)
         cx = (x0 + x1) / 2
         c.tag_bind(tag, "<Enter>", lambda e, cx=cx, ty=top_y, t=tips[i]: tip.show(cx, min(ty, pb - px(4)), t))
@@ -101,7 +103,7 @@ def bar_chart(c, tip, box, values, xlabels, tips, highlight=(), line=None, line_
                               font=(FONT, 8), anchor="se")
 
 
-def heatmap(c, tip, box, grid):
+def heatmap(c, tip, box, grid, ramp=(HEAT_LOW, HEAT_HIGH), word="urge"):
     x, y, w, h = box
     lw = px(34)
     cw = (w - lw) / 24
@@ -112,11 +114,11 @@ def heatmap(c, tip, box, grid):
         c.create_text(x + lw - px(6), cy + ch / 2, text=WEEKDAYS[d], fill=MUTED, font=(FONT, 8), anchor="e")
         for hr in range(24):
             v = grid[d][hr]
-            color = HEAT_ZERO if v == 0 else mix(HEAT_LOW, HEAT_HIGH, (v / peak) ** 0.8)
+            color = HEAT_ZERO if v == 0 else mix(ramp[0], ramp[1], (v / peak) ** 0.8)
             x0 = x + lw + hr * cw
             tag = f"cell{d}_{hr}"
             c.create_rectangle(x0 + 1, cy + 1, x0 + cw - 1, cy + ch - 1, fill=color, outline="", tags=tag)
-            text = f"{WEEKDAYS[d]} {hour_range(hr)}\n{plural(v, 'urge')}"
+            text = f"{WEEKDAYS[d]} {hour_range(hr)}\n{plural(v, word)}"
             c.tag_bind(tag, "<Enter>", lambda e, x0=x0, cy=cy, t=text: tip.show(x0 + cw / 2, cy, t))
             c.tag_bind(tag, "<Leave>", lambda e: tip.hide())
     by = y + 7 * ch + px(6)
@@ -164,7 +166,7 @@ def intensity_chart(c, tip, box, series):
                       fill=MUTED, font=(FONT, 10))
 
 
-def hbars(c, box, rows, label_w=170, note_w=110):
+def hbars(c, box, rows, label_w=170, note_w=110, colour=ACCENT_SOFT):
     """rows: [(name, count, note, note_colour)] - one horizontal bar each, count after the bar, note at the right."""
     x, y, w, h = box
     peak = max((r[1] for r in rows), default=0) or 1
@@ -175,7 +177,7 @@ def hbars(c, box, rows, label_w=170, note_w=110):
         c.create_text(x, cy, text=name, fill=TEXT, font=(FONT, 10), anchor="w")
         bar_w = (w - lw - nw - px(30)) * v / peak
         if v:
-            c.create_rectangle(x + lw, cy - px(7), x + lw + bar_w, cy + px(7), fill=ACCENT_SOFT, outline="")
+            c.create_rectangle(x + lw, cy - px(7), x + lw + bar_w, cy + px(7), fill=colour, outline="")
         c.create_text(x + lw + bar_w + px(8), cy, text=str(v), fill=TEXT, font=(FONT, 10), anchor="w")
         if note:
             c.create_text(x + w, cy, text=note, fill=note_colour, font=(FONT, 9), anchor="e")
@@ -218,8 +220,8 @@ class ProgressWindow:
         self.win.resizable(False, False)
         self.render()
 
-    def tile(self, parent, label, value, sub, sub_color=MUTED):
-        f = tk.Frame(parent, bg=PANEL, padx=px(14), pady=px(8), width=px(206), height=px(104))
+    def tile(self, parent, label, value, sub, sub_color=MUTED, width=206, pad=14):
+        f = tk.Frame(parent, bg=PANEL, padx=px(pad), pady=px(8), width=px(width), height=px(104))
         f.pack(side="left", padx=(0, px(10)))
         f.pack_propagate(False)
         tk.Label(f, text=label, font=(FONT, 9), fg=MUTED, bg=PANEL, anchor="w").pack(fill="x")
@@ -268,13 +270,14 @@ class ProgressWindow:
         log = self.log
         now = log.now()
 
-        locks = sum(1 for e in log.events if e.get("kind", "lock") == "lock")
+        urges = log.urges()
+        locks = sum(1 for e in urges if e.get("kind", "lock") == "lock")
         head = tk.Frame(self.win, bg=BG)
         head.pack(fill="x")
         tk.Label(head, text="Your progress", font=(FONT, 20, "bold"), fg=TEXT, bg=BG).pack(side="left")
         button(head, "Close", self.win.destroy).pack(side="right")
-        tk.Label(self.win, text=f"{plural(len(log.events), 'urge')} logged in all ({locks} with the lock, "
-                                f"{len(log.events) - locks} on your own). Fewer, weaker and further apart is the trend you're after.",
+        tk.Label(self.win, text=f"{plural(len(urges), 'urge')} logged in all ({locks} with the lock, "
+                                f"{len(urges) - locks} on your own). Fewer, weaker and further apart is the trend you're after.",
                  font=(FONT, 10), fg=MUTED, bg=BG, anchor="w").pack(fill="x", pady=(px(2), px(12)))
 
         tiles = tk.Frame(self.win, bg=BG)
@@ -360,7 +363,54 @@ class ProgressWindow:
             c.create_text(RW / 2, px(104), text="Nothing yet. Pick what set it off when a lock ends.",
                           fill=MUTED, font=(FONT, 10))
 
+        self.boredom(cols)
         self.win.after(60_000, self._refresh)
+
+    def boredom(self, cols):
+        """The Bored button's own column, in its own colour. Nothing here is an urge and nothing above is boredom."""
+        log = self.log
+        BW = px(420)
+        col = tk.Frame(cols, bg=BG)
+        col.pack(side="left", anchor="n", padx=(px(10), 0))
+        tk.Label(col, text="Boredom", font=(FONT, 14, "bold"), fg=TEXT, bg=BG, anchor="w").pack(fill="x")
+        tk.Label(col, text="The Bored button, tracked apart from your urges.", font=(FONT, 9), fg=MUTED, bg=BG,
+                 anchor="w").pack(fill="x", pady=(0, px(8)))
+
+        # Boredom is neither good nor bad, so the comparisons stay plain numbers in a neutral colour.
+        tiles = tk.Frame(col, bg=BG)
+        tiles.pack(fill="x", pady=(0, px(10)))
+        self.tile(tiles, "Today", str(log.today(bored=True)), f"yesterday: {log.yesterday_by_now(bored=True)}",
+                  width=104, pad=12)
+        self.tile(tiles, "This week", str(log.this_week(bored=True)), f"last week: {log.last_week_by_now(bored=True)}",
+                  width=104, pad=12)
+        hit, total = log.bored_then_urge(30, BORED_URGE_WINDOW_MINUTES)
+        self.tile(tiles, "Bored, then an urge", f"{hit} of {total}" if total else "-", "within an hour, last 30 days",
+                  WARN if total and hit >= total / 2 else MUTED, width=182, pad=12)
+
+        # Last 30 days
+        c, tip = self.canvas(col, BW, px(130))
+        days = log.per_day(30, bored=True)
+        counts = [v for _, v in days]
+        titled(c, "Last 30 days", f"{plural(sum(counts), 'time')} you pressed Bored")
+        bar_chart(c, tip, (px(10), px(54), BW - px(26), px(70)), counts,
+                  {i: f"{days[i][0]:%d %b}" for i in (0, 7, 14, 21, 29)},
+                  [f"{d:%a %d %b}\nbored {plural(v, 'time')}" for d, v in days], highlight={29}, colours=(CALM_SOFT, CALM))
+
+        # When it hits
+        c, tip = self.canvas(col, BW, px(176))
+        titled(c, "When boredom hits", "last 30 days by day and hour · brighter = more")
+        heatmap(c, tip, (px(10), px(54), BW - px(24), px(116)), log.heat(30, bored=True),
+                ramp=(HEAT_CALM_LOW, HEAT_CALM_HIGH), word="time")
+
+        # What you picked
+        picks = log.bored_choice_counts(30)[:5]
+        c, tip = self.canvas(col, BW, px(56) + px(22) * max(len(picks), 2))
+        titled(c, "What you picked", "last 30 days · the five you reach for most")
+        if picks:
+            hbars(c, (px(16), px(52), BW - px(32), px(22) * len(picks)), [(bored_name(k), v, "", MUTED) for k, v in picks],
+                  label_w=200, note_w=0, colour=CALM_SOFT)
+        else:
+            c.create_text(BW / 2, px(80), text="Press Bored and pick something; it shows up here.", fill=MUTED, font=(FONT, 10))
 
     def _refresh(self):
         if self.win.winfo_exists():
@@ -396,5 +446,19 @@ def fake_log(path, days=40, seed=7):
             log.events.append({"ts": t.isoformat(timespec="seconds"), "kind": kind, "minutes": 3,
                                "choices": choices, "intensity_start": start, "intensity": finish,
                                "triggers": triggers})
+        # Bored presses: afternoons mostly, a pick most of the time, and now and then an urge follows
+        for _ in range(rng.choice([0, 0, 1, 1, 2])):
+            t = day + timedelta(hours=min(23, max(0, int(rng.gauss(15, 4)))), minutes=rng.randrange(60))
+            if t > end:
+                continue
+            pick = rng.choice(["sudoku", "sudoku", "stretch", "water", "outside", "read", "music", "write", "tidy", None])
+            log.events.append({"ts": t.isoformat(timespec="seconds"), "kind": "bored", "minutes": 0,
+                               "choices": [pick] if pick else [], "intensity_start": None, "intensity": None,
+                               "triggers": []})
+            follow = t + timedelta(minutes=rng.randrange(10, 55))
+            if rng.random() < 0.3 and follow <= end:
+                log.events.append({"ts": follow.isoformat(timespec="seconds"), "kind": "lock", "minutes": 3,
+                                   "choices": ["walk"], "intensity_start": 3, "intensity": 2, "triggers": ["Bored"]})
+    log.events.sort(key=lambda e: e["ts"])
     log.save()
     return log

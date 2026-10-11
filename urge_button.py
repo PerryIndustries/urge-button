@@ -8,7 +8,10 @@ breathe, go for a walk, put on Spotify, play Sudoku, or reach out to a friend.
 You rate the urge when it hits and again when the timer ends, and note what set
 it off. Just before an hour that's usually hard, a heads-up appears by the button.
 
-Right-click the button for Progress, Sudoku, logging an urge you handled without
+Beside it sits a smaller Bored button (or Ctrl+Alt+B): no lock, just three quick
+things to do for five minutes, and the press is tracked on its own, apart from urges.
+
+Right-click either button for Progress, Sudoku, logging an urge you handled without
 the lock, Settings and Quit. Data lives in %APPDATA%\\UrgeButton.
 
 Ctrl+Alt+Del is handled by Windows itself and cannot be blocked - that is the
@@ -42,11 +45,11 @@ import winapi
 from progress import ProgressWindow, fake_log
 from sudoku import SudokuLog
 from sudoku_ui import SudokuView, SudokuWindow, fake_sudoku_log
-from theme import ACCENT, BAD, BG, FONT, GOOD, MUTED, PANEL, PANEL_HI, TEXT, WARN, button, px
+from theme import ACCENT, BAD, BG, CALM, FONT, GOOD, MUTED, PANEL, PANEL_HI, TEXT, WARN, button, mix, px
 from urge_log import (
-    CONFIG_PATH, MAX_LOCK_MINUTES, OPTIONS, TRIGGERS, EventLog, clamp_minutes, cluster_minutes, format_gap,
-    heads_up_due,
-    hour_name, load_config, save_json, to_spotify_uri,
+    BORED_IDEAS, BORED_LINES, CONFIG_PATH, MAX_LOCK_MINUTES, OPTIONS, TRIGGERS, EventLog, bored_ideas, bored_key,
+    clamp_minutes, cluster_minutes, format_gap, heads_up_due, hour_name, load_config, pick_ideas, save_json,
+    to_spotify_uri,
 )
 
 FRIEND_PROMPTS = [
@@ -304,16 +307,12 @@ class LockScreen:
         self.heading("Music's on")
         msg = tk.Label(self.stage, text="Opening Spotify...", font=(FONT, 14), fg=MUTED, bg=BG)
         msg.pack(pady=12)
-        if not self.preview:
-            try:
-                os.startfile(self.app.config.get("spotify_uri") or "spotify:")
-            except OSError:
-                msg.config(text="Couldn't open Spotify - is it installed?", fg=BAD)
-            else:
-                # Spotify opens paused; give it a moment, then press play.
-                self.win.after(4000, winapi.press_media_play)
-                self.win.after(4000, lambda: msg.winfo_exists() and msg.config(
-                    text="Close your eyes for one song. Just listen."))
+        problem = self.app.play_music()
+        if problem:
+            msg.config(text=problem, fg=BAD)
+        elif not self.preview:
+            self.win.after(4000, lambda: msg.winfo_exists() and msg.config(
+                text="Close your eyes for one song. Just listen."))
         button(self.stage, "Pause / play", winapi.press_media_play).pack()
         self.back_row()
 
@@ -412,6 +411,21 @@ def small_window(app, title):
     return w
 
 
+def beside_button(app, w):
+    """Put a small window just above the floating button (below it when there's no room), on its monitor."""
+    root = app.root
+    w.update_idletasks()
+    ww, wh = w.winfo_reqwidth(), w.winfo_reqheight()
+    bx, by, bw, bh = root.winfo_x(), root.winfo_y(), root.winfo_width(), root.winfo_height()
+    mons = winapi.monitors()
+    mon = next((m for m in mons if m.contains(bx + bw // 2, by + bh // 2)), placement.find(mons, None))
+    x = max(mon.x + px(8), min(bx + bw - ww, mon.x + mon.w - ww - px(8)))
+    y = by - wh - px(8)
+    if y < mon.y:
+        y = by + bh + px(8)  # no room above: show it below
+    w.geometry(placement.geometry(x, y))
+
+
 class HeadsUp:
     """A small note beside the button just before an hour that's usually hard."""
 
@@ -434,25 +448,88 @@ class HeadsUp:
         bar.pack(fill="x")
         button(bar, "Got it", self.close, size=10).pack(side="right")
         button(bar, "Lock now", self.lock_now, primary=True, size=10).pack(side="right", padx=6)
-        self.place()
+        beside_button(app, w)
         w.after(120_000, self.close)
-
-    def place(self):
-        w, root = self.win, self.app.root
-        w.update_idletasks()
-        ww, wh = w.winfo_reqwidth(), w.winfo_reqheight()
-        bx, by, bw, bh = root.winfo_x(), root.winfo_y(), root.winfo_width(), root.winfo_height()
-        mons = winapi.monitors()
-        mon = next((m for m in mons if m.contains(bx + bw // 2, by + bh // 2)), placement.find(mons, None))
-        x = max(mon.x + px(8), min(bx + bw - ww, mon.x + mon.w - ww - px(8)))
-        y = by - wh - px(8)
-        if y < mon.y:
-            y = by + bh + px(8)  # no room above: show it below
-        w.geometry(placement.geometry(x, y))
 
     def lock_now(self):
         self.close()
         self.app.trigger()
+
+    def close(self):
+        if self.win.winfo_exists():
+            self.win.destroy()
+
+
+class BoredPanel:
+    """Bored? Three quick ideas in a small panel beside the button - no lock.
+
+    The press is on the record the moment the panel opens; picking an idea adds it to that event, and
+    closing without picking leaves it as just a press.
+    """
+
+    FAREWELL_MS = 2500
+
+    def __init__(self, app):
+        self.app = app
+        self.event = app.log.record_bored()
+        self.shown = []
+        w = self.win = tk.Toplevel(app.root, bg=CALM)
+        w.overrideredirect(True)
+        w.attributes("-topmost", True)
+        self.inner = tk.Frame(w, bg=PANEL, padx=px(16), pady=px(12))
+        self.inner.pack(padx=2, pady=2)
+        self.show_ideas()
+        beside_button(app, w)
+
+    def clear(self):
+        for child in self.inner.winfo_children():
+            child.destroy()
+        tk.Frame(self.inner, bg=PANEL, width=px(340), height=1).pack()  # keeps the panel one width
+
+    def show_ideas(self):
+        self.clear()
+        head = tk.Frame(self.inner, bg=PANEL)
+        head.pack(fill="x")
+        tk.Label(head, text="Bored? Pick one thing for five minutes.", font=(FONT, 12, "bold"), fg=TEXT, bg=PANEL,
+                 anchor="w").pack(side="left")
+        close = tk.Label(head, text="✕", font=(FONT, 10), fg=MUTED, bg=PANEL, cursor="hand2", padx=4)
+        close.pack(side="right")
+        close.bind("<Button-1>", lambda e: self.close())
+        tk.Label(self.inner, text="Something small and real. Scrolling doesn't count.", font=(FONT, 10), fg=MUTED,
+                 bg=PANEL, anchor="w").pack(fill="x", pady=(2, 8))
+        self.shown = pick_ideas(bored_ideas(self.app.config), avoid=self.shown)
+        for text in self.shown:
+            row = tk.Label(self.inner, text=text, font=(FONT, 11), fg=TEXT, bg=PANEL_HI, anchor="w", padx=px(12),
+                           pady=px(8), cursor="hand2")
+            row.pack(fill="x", pady=(0, px(4)))
+            row.bind("<Button-1>", lambda e, t=text: self.pick(t))
+            row.bind("<Enter>", lambda e, r=row: r.config(bg=mix(PANEL_HI, "#FFFFFF", 0.08)))
+            row.bind("<Leave>", lambda e, r=row: r.config(bg=PANEL_HI))
+        bar = tk.Frame(self.inner, bg=PANEL)
+        bar.pack(fill="x", pady=(6, 0))
+        button(bar, "Show me others", self.show_ideas, size=10).pack(side="right")
+        button(bar, "Just log it", self.just_log, size=10).pack(side="left")
+
+    def pick(self, text):
+        key = bored_key(text)
+        self.app.log.record_choice(self.event, key)
+        self.app.refresh_counts()
+        line = random.choice(BORED_LINES)
+        if key == "sudoku":
+            self.app.open_sudoku()
+            line = "Puzzle's up. Five minutes of that beats five of scrolling."
+        elif key == "music":
+            line = self.app.play_music() or "Music's coming on. Enjoy it."
+        self.farewell(line)
+
+    def just_log(self):
+        self.farewell("Logged. Noticing it counts for something.")
+
+    def farewell(self, line):
+        self.clear()
+        tk.Label(self.inner, text=line, font=(FONT, 12), fg=TEXT, bg=PANEL, anchor="w", wraplength=px(330),
+                 justify="left").pack(fill="x", pady=(2, 2))
+        self.win.after(self.FAREWELL_MS, self.close)
 
     def close(self):
         if self.win.winfo_exists():
@@ -523,9 +600,14 @@ class SettingsWindow:
         self.plan.pack(anchor="w", ipady=3)
         tk.Label(left, text="e.g. Phone in the other room, make tea, walk round the block.", font=(FONT, 9),
                  fg=MUTED, bg=BG, anchor="w").pack(fill="x")
-        hotkey = "Ctrl+Alt+U also triggers the lock from anywhere." if app.hotkey_ok else \
-            "Ctrl+Alt+U is taken by another app, so only the button works."
-        tk.Label(left, text=hotkey, font=(FONT, 10), fg=MUTED, bg=BG, anchor="w").pack(fill="x", pady=(6, 0))
+        hotkeys = [
+            "Ctrl+Alt+U also triggers the lock from anywhere." if app.hotkey_ok else
+            "Ctrl+Alt+U is taken by another app, so only the button works.",
+            "Ctrl+Alt+B opens the Bored ideas." if app.bored_hotkey_ok else
+            "Ctrl+Alt+B is taken by another app, so only the Bored button works.",
+        ]
+        tk.Label(left, text="\n".join(hotkeys), font=(FONT, 10), fg=MUTED, bg=BG, anchor="w",
+                 justify="left").pack(fill="x", pady=(6, 0))
         upd = tk.Frame(left, bg=BG)
         upd.pack(fill="x", pady=(10, 0))
         self.update_label = tk.Label(upd, text="", font=(FONT, 10), fg=MUTED, bg=BG, anchor="w",
@@ -596,6 +678,16 @@ class SettingsWindow:
         self.block_minutes.insert(0, str(app.config.get("block_minutes", 30)))
         self.block_minutes.pack(side="left", padx=(8, 0))
         tk.Label(third, text="Your work stays open in everything else. Websites need an admin setup; ask for it.",
+                 font=(FONT, 9), fg=MUTED, bg=BG, anchor="w", wraplength=px(330), justify="left").pack(fill="x", pady=(4, 0))
+
+        tk.Frame(third, bg=PANEL_HI, height=1).pack(fill="x", pady=(16, 4))
+        tk.Label(third, text="When you're bored", font=(FONT, 13, "bold"), fg=TEXT, bg=BG, anchor="w").pack(fill="x")
+        label(third, "Ideas the Bored button offers, three at a time (one per line)", top=6)
+        self.bored = tk.Text(third, width=36, height=6, font=(FONT, 11), padx=6, pady=4, **FIELD)
+        self.bored.insert("1.0", "\n".join(bored_ideas(app.config)))
+        self.bored.pack(anchor="w")
+        tk.Label(third, text="\"Play Sudoku\" opens the Sudoku and \"Put music on\" starts Spotify; the rest are nudges. "
+                             "Leave it blank for the defaults.",
                  font=(FONT, 9), fg=MUTED, bg=BG, anchor="w", wraplength=px(330), justify="left").pack(fill="x", pady=(4, 0))
 
         tk.Frame(third, bg=PANEL_HI, height=1).pack(fill="x", pady=(16, 4))
@@ -744,6 +836,8 @@ class SettingsWindow:
             cfg["block_minutes"] = max(0, min(240, int(self.block_minutes.get())))
         except ValueError:
             pass
+        ideas = [x.strip() for x in self.bored.get("1.0", "end").splitlines() if x.strip()]
+        cfg["bored_ideas"] = [] if ideas == [text for _, text in BORED_IDEAS] else ideas  # the defaults stay defaults
         sync_changed = (cfg.get("sync_repo"), cfg.get("sync_token"), cfg.get("sync")) != (
             self.sync_repo.get().strip(), self.sync_token.get().strip(), bool(self.sync_on.get()))
         cfg["sync_repo"] = self.sync_repo.get().strip() or sync.DEFAULT_REPO
@@ -761,7 +855,8 @@ class SettingsWindow:
 
 
 class App:
-    W, H = 176, 70
+    W, H = 176, 70     # the URGE button
+    BW, GAP = 72, 4    # the smaller Bored button beside it, and the seam between the two
 
     def __init__(self, log=None, sudoku_log=None, hotkey=True):
         self.config = load_config()
@@ -771,6 +866,7 @@ class App:
         self.lock = None
         self.settings = None
         self.sudoku_win = None
+        self.bored_panel = None
         self.heads_up_key = None
 
         root = self.root = tk.Tk()
@@ -778,16 +874,29 @@ class App:
         root.title("Urge Button")
         root.overrideredirect(True)
         root.attributes("-topmost", True)
-        root.configure(bg=ACCENT)
+        root.configure(bg=BG)
 
         self.place_button()
 
-        self.face = tk.Frame(root, bg=ACCENT, cursor="hand2")
-        self.face.pack(fill="both", expand=True)
+        # One window, two buttons: URGE on the left, Bored on the right. They move and dock together.
+        self.face = tk.Frame(root, bg=ACCENT, cursor="hand2", width=px(self.W), height=px(self.H))
+        self.face.pack(side="left", fill="y")
+        self.face.pack_propagate(False)
         self.title = tk.Label(self.face, text="URGE", font=(FONT, 16, "bold"), fg=TEXT, bg=ACCENT)
         self.sub = tk.Label(self.face, text="", font=(FONT, 9), fg=TEXT, bg=ACCENT)
         self.title.pack(pady=(px(8), 0))
         self.sub.pack()
+        self.bored_face = tk.Frame(root, bg=CALM, cursor="hand2", width=px(self.BW), height=px(self.H))
+        self.bored_face.pack(side="left", fill="y", padx=(px(self.GAP), 0))
+        self.bored_face.pack_propagate(False)
+        self.bored_title = tk.Label(self.bored_face, text="Bored", font=(FONT, 11, "bold"), fg=TEXT, bg=CALM)
+        self.bored_sub = tk.Label(self.bored_face, text="", font=(FONT, 8), fg=TEXT, bg=CALM)
+        self.bored_title.pack(pady=(px(14), 0))
+        self.bored_sub.pack()
+        bored_widgets = (self.bored_face, self.bored_title, self.bored_sub)
+        for wdg in bored_widgets:
+            wdg.bind("<Enter>", lambda e: [x.config(bg=mix(CALM, "#FFFFFF", 0.08)) for x in bored_widgets])
+            wdg.bind("<Leave>", lambda e: [x.config(bg=CALM) for x in bored_widgets])
 
         # Settings gear in the corner; its clicks never start a lock or a drag.
         gear = tk.Label(self.face, text="⚙", font=("Segoe UI Symbol", 11), fg=TEXT, bg=ACCENT, cursor="hand2")
@@ -802,6 +911,7 @@ class App:
         menu.add_command(label="Progress", command=self.show_progress)
         menu.add_command(label="Sudoku", command=self.open_sudoku)
         menu.add_command(label="Log an urge I handled on my own", command=lambda: LogOwnWindow(self))
+        menu.add_command(label="I'm bored", command=self.bored)
         menu.add_separator()
         menu.add_command(label="Settings", command=self.open_settings)
         menu.add_command(label="Quit", command=root.destroy)
@@ -811,9 +921,16 @@ class App:
             wdg.bind("<B1-Motion>", self._drag)
             wdg.bind("<ButtonRelease-1>", self._release)
             wdg.bind("<Button-3>", lambda e: menu.tk_popup(e.x_root, e.y_root))
+        for wdg in bored_widgets:
+            wdg.bind("<ButtonPress-1>", self._press)
+            wdg.bind("<B1-Motion>", self._drag)
+            wdg.bind("<ButtonRelease-1>", lambda e: self._release(e, self.bored))
+            wdg.bind("<Button-3>", lambda e: menu.tk_popup(e.x_root, e.y_root))
 
-        self.hotkey = winapi.Hotkey()
-        self.hotkey_ok = self.hotkey.start() if hotkey else False
+        self.hotkey = winapi.Hotkey((("U", "urge"), ("B", "bored")))
+        registered = self.hotkey.start() if hotkey else {}
+        self.hotkey_ok = registered.get("urge", False)
+        self.bored_hotkey_ok = registered.get("bored", False)
 
         # Closing chosen apps during a lock and the cooldown after it
         self.app_blocker = AppBlocker()
@@ -913,8 +1030,8 @@ class App:
 
     def _poll_hotkey(self):
         while not self.hotkey.presses.empty():
-            self.hotkey.presses.get_nowait()
-            self.trigger()
+            name = self.hotkey.presses.get_nowait()
+            (self.bored if name == "bored" else self.trigger)()
         while not self._sync_results.empty():
             self._sync_done(*self._sync_results.get_nowait())
         while not self._update_results.empty():
@@ -942,9 +1059,21 @@ class App:
         if left and self.lock is None:
             gap = f"apps blocked {max(1, left // 60)}m"
         self.sub.config(text=f"today {self.log.today()}  ·  {gap}")
+        self.bored_sub.config(text=f"today {self.log.today(bored=True)}")
 
     def save_config(self):
         save_json(CONFIG_PATH, self.config)
+
+    def play_music(self):
+        """Open Spotify (your playlist from Settings) and press play once it's up. Returns a problem line, or None."""
+        if not self.online:
+            return None  # previews never launch anything
+        try:
+            os.startfile(self.config.get("spotify_uri") or "spotify:")
+        except OSError:
+            return "Couldn't open Spotify - is it installed?"
+        self.root.after(4000, winapi.press_media_play)  # Spotify opens paused; give it a moment, then press play
+        return None
 
     # -- self-update
 
@@ -1005,9 +1134,13 @@ class App:
         else:
             self.sudoku_win = SudokuWindow(self)
 
+    def width(self):
+        """The whole floating window: URGE, the seam, and Bored."""
+        return px(self.W + self.GAP + self.BW)
+
     def place_button(self):
         """Put the button where the config says, falling back to the main monitor if that spot is gone."""
-        w, h = px(self.W), px(self.H)
+        w, h = self.width(), px(self.H)
         mons = winapi.monitors()
         cfg = self.config
         x, y = cfg.get("button_x"), cfg.get("button_y")
@@ -1045,17 +1178,17 @@ class App:
         if self._moved:
             self.root.geometry(placement.geometry(wx + dx, wy + dy))
 
-    def _release(self, e):
+    def _release(self, e, action=None):
         if self._moved:
             x, y = self.root.winfo_x(), self.root.winfo_y()
             cfg = self.config
             cfg["button_x"], cfg["button_y"], cfg["button_anchor"] = x, y, "custom"
-            here = [m for m in winapi.monitors() if m.contains(x + px(self.W) // 2, y + px(self.H) // 2)]
+            here = [m for m in winapi.monitors() if m.contains(x + self.width() // 2, y + px(self.H) // 2)]
             if here:
                 cfg["button_monitor"] = here[0].name
             self.save_config()
         else:
-            self.trigger()
+            (action or self.trigger)()
 
     def trigger(self, preview=False):
         if self.lock is not None:
@@ -1078,6 +1211,16 @@ class App:
 
     def on_unlock(self):
         self.lock = None
+        self.refresh_counts()
+
+    def bored(self):
+        """The Bored button: no lock, a few quick ideas, and the press goes on its own record."""
+        if self.lock is not None:
+            return  # you're in the middle of an urge; that comes first
+        if self.bored_panel and self.bored_panel.win.winfo_exists():
+            self.bored_panel.win.lift()
+            return
+        self.bored_panel = BoredPanel(self)
         self.refresh_counts()
 
     def show_progress(self):
@@ -1125,6 +1268,12 @@ def run_preview(out_dir, stage):
         target = app.lock.win
     elif stage == "headsup":
         target = HeadsUp(app, 21).win
+    elif stage in ("bored", "boredpicked"):
+        app.bored()
+        target = app.bored_panel.win
+        if stage == "boredpicked":  # a plain nudge, so no Sudoku window or Spotify gets in the shot
+            panel = app.bored_panel
+            panel.pick(next((t for t in panel.shown if bored_key(t) not in ("sudoku", "music")), panel.shown[0]))
     else:
         app.trigger(preview=True)
         target = app.lock.win
