@@ -114,9 +114,9 @@ rep("""    if (!S.db) return;
 """, "")
 
 # Boot: backup/restore, ?start, offline.
-rep("""  connect();""", """  function backupSub() { $("backupSub").textContent = plural(events().length, "urge") + " saved on this phone"; }
+rep("""  connect();""", """  function backupSub() { $("backupSub").textContent = plural(events().length, "urge") + " and " + plural(S.sdkGames.length, "Sudoku game") + " saved on this phone"; }
   $("exportBtn").addEventListener("click", () => {
-    const body = JSON.stringify({ app: "urge-button", version: 1, months: S.months, settings: S.settings }, null, 2);
+    const body = JSON.stringify({ app: "urge-button", version: 1, months: S.months, settings: S.settings, sudoku: sdkShared() }, null, 2);
     $("exportBtn").href = URL.createObjectURL(new Blob([body], { type: "application/json" }));
     $("exportBtn").download = "urge-history-" + new Date().toISOString().slice(0, 10) + ".json";
   });
@@ -132,8 +132,11 @@ rep("""  connect();""", """  function backupSub() { $("backupSub").textContent =
         added += extra.length;
         S.months[k] = (S.months[k] || []).concat(extra);
       }
-      ls.set("urge.months", S.months); render(); backupSub();
-      $("backupNote").textContent = "Restored " + plural(added, "urge") + ". Anything already here was kept.";
+      ls.set("urge.months", S.months); render();
+      const before = S.sdkGames.length;
+      if (data.sudoku && typeof data.sudoku === "object") applySudoku(mergeSudokuDocs(sdkShared(), data.sudoku));
+      backupSub();
+      $("backupNote").textContent = "Restored " + plural(added, "urge") + " and " + plural(S.sdkGames.length - before, "Sudoku game") + ". Anything already here was kept.";
     } catch { $("backupNote").textContent = "That file isn't an Urge Button backup."; }
     e.target.value = "";
   });
