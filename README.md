@@ -14,6 +14,8 @@ python urge_button.py --install
 
 `--install` puts an "Urge Button" shortcut on the desktop, sets it to start with Windows, and starts it now. Right-click the floating button for Progress, Settings and Quit; Ctrl+Alt+U triggers the lock from anywhere.
 
+**Updates:** the app keeps itself up to date from this repo (on start and every 6 hours, like Rift Pen). New versions download in the background and run the next time it starts, or right away from "Restart to update" in the right-click menu. It only updates a clean checkout of `main`, so local edits are never overwritten.
+
 Your history and settings live in `%APPDATA%\UrgeButton\` (`events.json`, `config.json`), not in the repo. To bring your history to another computer, copy that folder across.
 
 Tests: `python -m pytest tests`. Screenshots of any screen without locking (needs Pillow): `python urge_button.py --preview <dir> <options|sudoku|friend|walk|spotify|finish|progress|logged|settings|button>`.
