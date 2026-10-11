@@ -38,6 +38,12 @@ def test_centre_in_is_relative_to_the_cover_window():
     assert placement.centre_in(MAIN, -1920, 0) == (1920 + 1280, 720)
 
 
+def test_geometry_keeps_negative_positions_from_the_left_and_top():
+    assert placement.geometry(-633, -98) == "+-633+-98"
+    assert placement.geometry(-1920, -1440, 3847, 2520) == "3847x2520+-1920+-1440"
+    assert placement.geometry(40, 40, 100, 50) == "100x50+40+40"
+
+
 def test_old_dragged_position_is_kept(tmp_path):
     path = tmp_path / "config.json"
     save_json(path, {"button_x": 500, "button_y": 300})

@@ -43,6 +43,13 @@ def find(monitors, name):
     return monitors[0] if monitors else None
 
 
+def geometry(x, y, w=None, h=None):
+    """A Tk geometry string for a window at (x, y). Always "+x+y": Tk reads "-633" as an offset from the
+    right/bottom edge, which throws windows on monitors left of or above the main one to the wrong side."""
+    size = f"{w}x{h}" if w is not None else ""
+    return f"{size}+{x}+{y}"
+
+
 def anchor_position(monitor, w, h, anchor, margin=24):
     """Top-left corner for a w x h window at `anchor` inside the monitor's work area."""
     x0, y0, ww, wh = monitor.work

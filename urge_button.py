@@ -201,7 +201,7 @@ class LockScreen:
         else:
             x, y, w, h = winapi.virtual_screen()
             self.win.overrideredirect(True)
-            self.win.geometry(f"{w}x{h}{x:+d}{y:+d}")
+            self.win.geometry(placement.geometry(x, y, w, h))
             self.win.attributes("-topmost", True)
             self.win.protocol("WM_DELETE_WINDOW", lambda: None)
             self.blocker = winapi.KeyBlocker()
@@ -494,7 +494,7 @@ class HeadsUp:
         y = by - wh - px(8)
         if y < mon.y:
             y = by + bh + px(8)  # no room above: show it below
-        w.geometry(f"{x:+d}{y:+d}")
+        w.geometry(placement.geometry(x, y))
 
     def lock_now(self):
         self.close()
@@ -770,7 +770,7 @@ class SettingsWindow:
             t.overrideredirect(True)
             t.attributes("-topmost", True)
             size = px(200)
-            t.geometry(f"{size}x{size}{m.x + (m.w - size) // 2:+d}{m.y + (m.h - size) // 2:+d}")
+            t.geometry(placement.geometry(m.x + (m.w - size) // 2, m.y + (m.h - size) // 2, size, size))
             tk.Label(t, text=str(i + 1), font=(FONT, 96, "bold"), fg=TEXT, bg=ACCENT).pack(expand=True)
             t.after(2500, t.destroy)
 
@@ -1021,7 +1021,7 @@ class App:
                 anchor = "bottom-right"
             mon = placement.find(mons, cfg.get("button_monitor"))
             x, y = placement.anchor_position(mon, w, h, anchor, margin=px(24))
-        self.root.geometry(f"{w}x{h}{x:+d}{y:+d}")
+        self.root.geometry(placement.geometry(x, y, w, h))
 
     def move_button(self, monitor_name=None, anchor=None):
         if monitor_name is not None:
@@ -1045,7 +1045,7 @@ class App:
         if abs(dx) + abs(dy) > 4:
             self._moved = True
         if self._moved:
-            self.root.geometry(f"{wx + dx:+d}{wy + dy:+d}")
+            self.root.geometry(placement.geometry(wx + dx, wy + dy))
 
     def _release(self, e):
         if self._moved:
