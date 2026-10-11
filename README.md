@@ -2,6 +2,8 @@
 
 Press it when an urge hits. The screen locks for a few minutes, you pick something better to do (walk, music, Sudoku, text a friend), and every urge is tracked so you can see the trend.
 
+Beside it is a smaller **Bored** button for the mindless kind of restlessness: no lock, just three quick ideas (Sudoku, a stretch, a glass of water, a few pages, music...), one tap to pick one, and the press is tracked on its own - Progress has a Boredom section (today, this week, 30 days, when it hits, what you picked, and how often an urge followed within the hour) and nothing about urges counts it. The ideas are yours to edit in Settings, one per line.
+
 ## Windows
 
 Needs Python 3.10+ from python.org (tkinter comes with it). Nothing else to install.
@@ -12,13 +14,13 @@ cd urge-button
 python urge_button.py --install
 ```
 
-`--install` puts an "Urge Button" shortcut on the desktop, sets it to start with Windows, and starts it now. Right-click the floating button for Progress, Sudoku, Settings and Quit; Ctrl+Alt+U triggers the lock from anywhere.
+`--install` puts an "Urge Button" shortcut on the desktop, sets it to start with Windows, and starts it now. Right-click the floating button for Progress, Sudoku, "I'm bored", Settings and Quit; Ctrl+Alt+U triggers the lock from anywhere and Ctrl+Alt+B opens the Bored ideas.
 
 **Updates:** the app keeps itself up to date from this repo (on start and every 30 minutes, like Rift Pen). New versions download in the background and install themselves the first time nothing is open (no lock, no Sudoku, Settings or Progress window) and the keyboard and mouse have been quiet for two minutes - or right away from "Restart to update" in the right-click menu, or at the next start. It only updates a clean checkout of `main`, so local edits are never overwritten.
 
 Your history and settings live in `%APPDATA%\UrgeButton\` (`events.json`, `sudoku.json`, `config.json`), not in the repo. To bring your history to another computer, copy that folder across.
 
-Tests: `python -m pytest tests`. Screenshots of any screen without locking (needs Pillow): `python urge_button.py --preview <dir> <options|sudoku|friend|walk|spotify|finish|progress|logged|settings|button|sudokuwin|sudokusolved|sudokunew>`.
+Tests: `python -m pytest tests`. Screenshots of any screen without locking (needs Pillow): `python urge_button.py --preview <dir> <options|sudoku|friend|walk|spotify|finish|progress|logged|settings|button|sudokuwin|sudokusolved|sudokunew|bored|boredpicked|headsup|cluster>`.
 
 ## Sudoku
 
@@ -32,7 +34,7 @@ Open https://perryindustries.github.io/urge-button/ in Safari, then Share, Add t
 
 ## One history on PC and phone
 
-Both apps sync through two files in the private repo `PerryIndustries/urge-data`: `events.json` for urges and `sudoku.json` for Sudoku (the record of games, plus the puzzle in progress). Records merge as a union by id with the latest edit winning; the puzzle in progress is whichever copy was saved last, so you can start on the PC and finish on the phone. A PC with the GitHub CLI logged in (`gh auth login`) needs nothing else. The phone, or a PC without `gh`, needs a token:
+Both apps sync through two files in the private repo `PerryIndustries/urge-data`: `events.json` for urges and Bored presses (`kind: "bored"`, same file, same merge) and `sudoku.json` for Sudoku (the record of games, plus the puzzle in progress). Records merge as a union by id with the latest edit winning; the puzzle in progress is whichever copy was saved last, so you can start on the PC and finish on the phone. A PC with the GitHub CLI logged in (`gh auth login`) needs nothing else. The phone, or a PC without `gh`, needs a token:
 
 1. Open https://github.com/settings/personal-access-tokens/new
 2. Name it "Urge Button", pick an expiry, Repository access: **Only select repositories** → `urge-data`
