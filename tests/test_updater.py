@@ -4,7 +4,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from updater import Updater  # noqa: E402
+from updater import CHECK_SECONDS, Updater, restart_allowed  # noqa: E402
 
 
 def git(cwd, *args):
@@ -57,3 +57,17 @@ def test_skips_other_branches(tmp_path):
     publish(other, "v2", "update")
     u = Updater(clone)
     assert u.check() is None and "experiment" in u.status
+
+
+def test_checks_every_half_hour():
+    assert CHECK_SECONDS == 30 * 60
+
+
+def test_auto_restart_waits_for_a_quiet_moment():
+    ready = "abc1234 Sudoku"
+    assert restart_allowed(ready, [], 300)
+    assert restart_allowed(ready, [], None)                 # idle time unknown: still fine
+    assert not restart_allowed(None, [], 300)               # nothing downloaded
+    assert not restart_allowed(ready, ["lock"], 300)        # something on screen
+    assert not restart_allowed(ready, [], 119)              # someone's at the keyboard
+    assert restart_allowed(ready, [], 120)

@@ -177,6 +177,18 @@ def press_media_play():
     user32.keybd_event(VK_MEDIA_PLAY_PAUSE, 0, 2, 0)
 
 
+class LASTINPUTINFO(ctypes.Structure):
+    _fields_ = [("cbSize", wintypes.UINT), ("dwTime", wintypes.DWORD)]
+
+
+def idle_seconds():
+    """Seconds since the last keyboard or mouse input, or None when Windows won't say."""
+    info = LASTINPUTINFO(cbSize=ctypes.sizeof(LASTINPUTINFO))
+    if not user32.GetLastInputInfo(ctypes.byref(info)):
+        return None
+    return ((kernel32.GetTickCount() - info.dwTime) & 0xFFFFFFFF) / 1000.0
+
+
 _instance = None
 
 

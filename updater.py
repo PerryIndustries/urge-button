@@ -1,15 +1,30 @@
 """Keep the PC app up to date from GitHub, the way Rift Pen does with electron-updater.
 
-Checks on start and every 6 hours. When origin/main has moved on, it fast-forwards the local
-checkout in the background (only on `main`, only with no local edits, only a fast-forward), and the
-new code runs the next time the app starts - or straight away from "Restart to update".
+Checks on start and every 30 minutes. When origin/main has moved on, it fast-forwards the local
+checkout in the background (only on `main`, only with no local edits, only a fast-forward). The new
+code then runs as soon as it's safe to restart - nothing on screen and the computer left alone for a
+couple of minutes - or straight away from "Restart to update", or at the next start.
 """
 
 import subprocess
 from pathlib import Path
 
-CHECK_SECONDS = 6 * 60 * 60
+CHECK_SECONDS = 30 * 60
+RESTART_POLL_SECONDS = 30
+MIN_IDLE_SECONDS = 120
 NO_WINDOW = 0x08000000
+
+
+def restart_allowed(ready, open_windows, idle_seconds, min_idle=MIN_IDLE_SECONDS):
+    """Whether a downloaded update can be applied right now by restarting the app.
+
+    Only with something ready, no lock or other window open (a restart would throw it away), and
+    no keyboard or mouse input for `min_idle` seconds. idle_seconds=None means it couldn't be measured,
+    which counts as idle: a restart takes under a second and the button comes straight back.
+    """
+    if not ready or open_windows:
+        return False
+    return idle_seconds is None or idle_seconds >= min_idle
 
 
 class Updater:
