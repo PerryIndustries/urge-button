@@ -2,7 +2,7 @@
 
 Press it when an urge hits. The screen locks for a few minutes, you pick something better to do (walk, music, Sudoku, text a friend), and every urge is tracked so you can see the trend.
 
-Beside it is a smaller **Bored** button for the mindless kind of restlessness: no lock, just three quick ideas (Sudoku, a stretch, a glass of water, a few pages, music...), one tap to pick one, and the press is tracked on its own - Progress has a Boredom section (today, this week, 30 days, when it hits, what you picked, and how often an urge followed within the hour) and nothing about urges counts it. The ideas are yours to edit in Settings, one per line.
+Beside it is a smaller **Bored** button for the mindless kind of restlessness: no lock, just three quick ideas (Sudoku, a stretch, a glass of water, a few pages, music...), one tap to pick one, and the idea then runs right there in the panel (on the phone, in the sheet): a box for what's on your mind, with everything you've saved under Your notes (delete any of them); a guided two-minute stretch, six stretches of twenty seconds with Pause; five-minute timers for stepping outside (then a line for what you noticed), tidying one surface (it suggests one, or a different one) and any idea of your own; ten minutes for reading (how many pages?) and for practising (it remembers what); the lock screen's text-a-friend flow; a glass of water, with today's count. Sudoku and music still just open. Each ends with Done or Stop, and the timers read the clock rather than counting ticks, so putting the window or the app away loses no time. The press is tracked on its own - Progress has a Boredom section (today, this week, finished of picked, time on it, 30 days, when it hits, what you picked and how often you finished it, your notes, and how often an urge followed within the hour) and nothing about urges counts it. The ideas are yours to edit in Settings, one per line.
 
 ## Windows
 
@@ -20,7 +20,7 @@ python urge_button.py --install
 
 Your history and settings live in `%APPDATA%\UrgeButton\` (`events.json`, `sudoku.json`, `config.json`), not in the repo. To bring your history to another computer, copy that folder across.
 
-Tests: `python -m pytest tests`. Screenshots of any screen without locking (needs Pillow): `python urge_button.py --preview <dir> <options|sudoku|friend|walk|spotify|finish|progress|logged|settings|button|sudokuwin|sudokusolved|sudokunew|bored|boredpicked|headsup|cluster>`.
+Tests: `python -m pytest tests`. Screenshots of any screen without locking (needs Pillow): `python urge_button.py --preview <dir> <options|sudoku|friend|walk|spotify|finish|progress|logged|settings|button|sudokuwin|sudokusolved|sudokunew|bored|boredwrite|boredstretch|boredtimer|boredtidy|boredread|boredpractice|boredfriend|boredwater|boredcustom|borednotes|borednoticed|boredpages|boredpicked|headsup|cluster>`.
 
 ## Sudoku
 
@@ -34,7 +34,7 @@ Open https://perryindustries.github.io/urge-button/ in Safari, then Share, Add t
 
 ## One history on PC and phone
 
-Both apps sync through two files in the private repo `PerryIndustries/urge-data`: `events.json` for urges and Bored presses (`kind: "bored"`, same file, same merge) and `sudoku.json` for Sudoku (the record of games, plus the puzzle in progress). Records merge as a union by id with the latest edit winning; the puzzle in progress is whichever copy was saved last, so you can start on the PC and finish on the phone. A PC with the GitHub CLI logged in (`gh auth login`) needs nothing else. The phone, or a PC without `gh`, needs a token:
+Both apps sync through two files in the private repo `PerryIndustries/urge-data`: `events.json` for urges and Bored presses (`kind: "bored"`, same file, same merge; how the activity went rides on the same event as `done`, `seconds`, `note` and `amount`, written only when set, so an older copy of either app reads the file as before) and `sudoku.json` for Sudoku (the record of games, plus the puzzle in progress). Records merge as a union by id with the latest edit winning; the puzzle in progress is whichever copy was saved last, so you can start on the PC and finish on the phone. A PC with the GitHub CLI logged in (`gh auth login`) needs nothing else. The phone, or a PC without `gh`, needs a token:
 
 1. Open https://github.com/settings/personal-access-tokens/new
 2. Name it "Urge Button", pick an expiry, Repository access: **Only select repositories** → `urge-data`
