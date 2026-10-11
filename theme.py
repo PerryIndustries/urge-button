@@ -16,6 +16,13 @@ WARN = "#E8B35A"
 BAD = "#F2726F"
 FONT = "Segoe UI"
 
+# Sudoku board: the selected cell, cells with the same digit, its row/column/box, and entered digits.
+SEL = "#3A4192"
+SAME = "#2A2F5C"
+PEER = "#1B1E29"
+BOX_LINE = "#5A606A"
+ACCENT_BRIGHT = "#9AA2FF"
+
 # Sequential ramp for the heatmap: one hue, dark -> light on the dark surface.
 HEAT_LOW = "#262A52"
 HEAT_HIGH = "#C3C8FF"

@@ -8,8 +8,8 @@ breathe, go for a walk, put on Spotify, play Sudoku, or reach out to a friend.
 You rate the urge when it hits and again when the timer ends, and note what set
 it off. Just before an hour that's usually hard, a heads-up appears by the button.
 
-Right-click the button for Progress, logging an urge you handled without the
-lock, Settings and Quit. Data lives in %APPDATA%\\UrgeButton.
+Right-click the button for Progress, Sudoku, logging an urge you handled without
+the lock, Settings and Quit. Data lives in %APPDATA%\\UrgeButton.
 
 Ctrl+Alt+Del is handled by Windows itself and cannot be blocked - that is the
 deliberate hard exit. The lock always ends on its own when the timer runs out.
@@ -17,6 +17,9 @@ deliberate hard exit. The lock always ends on its own when the timer runs out.
     pythonw urge_button.py                       run it
     python urge_button.py --install              desktop shortcut + start with Windows
     python urge_button.py --preview DIR STAGE    screenshot a screen without locking
+
+Sudoku (right-click the button, or pick it during a lock) is saved as you go and tracked, and
+shares one record with the phone through sudoku.json in the same private repo as the urges.
 """
 
 import math
@@ -33,12 +36,12 @@ from pathlib import Path
 import placement
 import sync
 from blocker import AppBlocker, running_apps
-from updater import CHECK_SECONDS, Updater
+from updater import CHECK_SECONDS, RESTART_POLL_SECONDS, Updater, restart_allowed
 import theme
 import winapi
 from progress import ProgressWindow, fake_log
-from sudoku import check as check_sudoku
-from sudoku import make_puzzle
+from sudoku import SudokuLog
+from sudoku_ui import SudokuView, SudokuWindow, fake_sudoku_log
 from theme import ACCENT, BAD, BG, FONT, GOOD, MUTED, PANEL, PANEL_HI, TEXT, WARN, button, px
 from urge_log import (
     CONFIG_PATH, MAX_LOCK_MINUTES, OPTIONS, TRIGGERS, EventLog, clamp_minutes, cluster_minutes, format_gap,
@@ -118,70 +121,6 @@ def load_photo(path, max_h):
     return img.subsample(factor, factor) if factor > 1 else img
 
 
-# --------------------------------------------------------------------------- sudoku board
-
-
-class SudokuBoard(tk.Frame):
-    def __init__(self, master):
-        super().__init__(master, bg=BG)
-        self.cells = {}
-        self.grid_frame = tk.Frame(self, bg=MUTED)
-        self.grid_frame.pack()
-        self.status = tk.Label(self, text="", font=(FONT, 12), fg=MUTED, bg=BG)
-        self.status.pack(pady=(10, 4))
-        bar = tk.Frame(self, bg=BG)
-        bar.pack()
-        button(bar, "Check", self.check).pack(side="left", padx=4)
-        button(bar, "New puzzle", self.new).pack(side="left", padx=4)
-        self.new()
-
-    def new(self):
-        for w in self.grid_frame.winfo_children():
-            w.destroy()
-        self.cells.clear()
-        self.puzzle, _ = make_puzzle(random.Random())
-        vcmd = (self.register(lambda s: s == "" or (len(s) == 1 and s in "123456789")), "%P")
-        size = px(44)
-        for br in range(3):
-            for bc in range(3):
-                box = tk.Frame(self.grid_frame, bg=MUTED)
-                box.grid(row=br, column=bc, padx=1, pady=1)
-                for i in range(3):
-                    for j in range(3):
-                        r, c = br * 3 + i, bc * 3 + j
-                        slot = tk.Frame(box, width=size, height=size, bg=PANEL)
-                        slot.grid(row=i, column=j, padx=1, pady=1)
-                        slot.pack_propagate(False)
-                        given = self.puzzle[r][c]
-                        if given:
-                            w = tk.Label(slot, text=str(given), font=(FONT, 18, "bold"), fg=TEXT, bg=PANEL_HI)
-                        else:
-                            w = tk.Entry(slot, justify="center", font=(FONT, 18), fg=ACCENT, bg=PANEL,
-                                         insertbackground=TEXT, relief="flat", validate="key", validatecommand=vcmd)
-                            w.bind("<KeyRelease>", self._on_key)
-                            self.cells[(r, c)] = w
-                        w.pack(fill="both", expand=True)
-        self.status.config(text="Fill every row, column and box with 1-9.", fg=MUTED)
-
-    def _on_key(self, e):
-        for w in self.cells.values():
-            w.config(fg=ACCENT)
-        if all(w.get() for w in self.cells.values()):
-            self.check()
-
-    def check(self):
-        entries = {rc: int(w.get()) for rc, w in self.cells.items() if w.get()}
-        wrong, empty = check_sudoku(entries, self.puzzle)
-        for rc in wrong:
-            self.cells[rc].config(fg=BAD)
-        if wrong:
-            self.status.config(text=f"{len(wrong)} cell(s) clash - marked in red.", fg=BAD)
-        elif empty:
-            self.status.config(text=f"No clashes. {empty} to go.", fg=GOOD)
-        else:
-            self.status.config(text="Solved. Nice.", fg=GOOD)
-
-
 # --------------------------------------------------------------------------- lock screen
 
 
@@ -192,6 +131,7 @@ class LockScreen:
         self.preview = preview
         self.remaining = int(minutes * 60)
         self.done = False
+        self.playing = False  # the Sudoku board is up (the clock shrinks to make room)
         self.blocker = None
 
         self.win = tk.Toplevel(app.root, bg=BG)
@@ -285,6 +225,7 @@ class LockScreen:
 
     def show_options(self):
         self.show_why(True)
+        self.set_playing(False)
         self.clear_stage()
         tk.Label(self.stage, text="Pick one:", font=(FONT, 14), fg=MUTED, bg=BG).pack(pady=(0, 10))
         row = tk.Frame(self.stage, bg=BG)
@@ -376,10 +317,18 @@ class LockScreen:
         button(self.stage, "Pause / play", winapi.press_media_play).pack()
         self.back_row()
 
+    def set_playing(self, on):
+        if on != self.playing and not self.done:
+            self.playing = on
+            self.clock.config(font=(FONT, 34 if on else 64, "bold"))
+            self.clock.pack_configure(pady=(4, 10) if on else (10, 18))
+
     def show_sudoku(self):
+        """Carries on the saved puzzle, or starts one at the last difficulty. Saved as you go."""
         self.show_why(False)  # the board needs the height
+        self.set_playing(True)
         self.clear_stage()
-        SudokuBoard(self.stage).pack()
+        SudokuView(self.stage, self.app, cell=px(46), from_urge=True).pack()
         self.back_row()
 
     def show_friend(self):
@@ -429,8 +378,13 @@ class LockScreen:
         if self.blocker:
             self.blocker.stop()
         self.clock.config(text="You made it.", fg=GOOD, font=(FONT, 48, "bold"))
+        self.clock.pack_configure(pady=(10, 18))
         self.show_why(False)
+        keep = self.playing and self.app.sudoku.playable() is not None
         self.clear_stage()
+        if keep:
+            tk.Label(self.stage, text="Your puzzle is saved. Pick it up any time from Sudoku in the button's menu.",
+                     font=(FONT, 11), fg=MUTED, bg=BG).pack(pady=(0, 12))
         tk.Label(self.stage, text="How strong is it now?", font=(FONT, 14), fg=MUTED, bg=BG).pack(pady=(0, 10))
         intensity_picker(self.stage, lambda n: self.app.log.record_intensity(self.event, n),
                          self.event.get("intensity")).pack()
@@ -684,7 +638,8 @@ class SettingsWindow:
     def _watch_updates(self):
         if self.win.winfo_exists():
             u = self.app.updater
-            text = f"Update ready: {u.ready}. Restart from the button's menu." if u.ready else u.status
+            text = (f"Update ready: {u.ready}. It installs itself once nothing's open and you've stepped away, "
+                    "or right now from the button's menu.") if u.ready else u.status
             self.update_label.config(text="Updates: " + text, fg=GOOD if u.ready else MUTED)
             self.win.after(1000, self._watch_updates)
 
@@ -808,11 +763,14 @@ class SettingsWindow:
 class App:
     W, H = 176, 70
 
-    def __init__(self, log=None, hotkey=True):
+    def __init__(self, log=None, sudoku_log=None, hotkey=True):
         self.config = load_config()
         self.log = log or EventLog()
+        self.sudoku = sudoku_log or SudokuLog()
+        self.sudoku_views = []  # every board on screen, so a sync can redraw them
         self.lock = None
         self.settings = None
+        self.sudoku_win = None
         self.heads_up_key = None
 
         root = self.root = tk.Tk()
@@ -842,6 +800,7 @@ class App:
 
         menu = self.menu = tk.Menu(root, tearoff=0)
         menu.add_command(label="Progress", command=self.show_progress)
+        menu.add_command(label="Sudoku", command=self.open_sudoku)
         menu.add_command(label="Log an urge I handled on my own", command=lambda: LogOwnWindow(self))
         menu.add_separator()
         menu.add_command(label="Settings", command=self.open_settings)
@@ -860,9 +819,10 @@ class App:
         self.app_blocker = AppBlocker()
         self._block_loop()
 
-        # Self-update from GitHub (like Rift Pen): check on start and every 6 hours
+        # Self-update from GitHub (like Rift Pen): check on start and every 30 minutes, restart when it's quiet
         self.updater = Updater(Path(__file__).resolve().parent)
         self._update_results = queue.Queue()
+        self._restart_watch = False
         if hotkey:  # previews never touch git
             self.root.after(20_000, self._check_updates)
 
@@ -874,6 +834,8 @@ class App:
         self._sync_again = False
         self._sync_results = queue.Queue()
         self.log.on_change = lambda: self.schedule_sync(3000)
+        # Sudoku moves come thick and fast, so they wait a little longer; a game starting or ending goes out right away
+        self.sudoku.on_change = lambda notify: self.schedule_sync(1000 if notify == "now" else 15_000)
         if self.online:
             self.schedule_sync(1500)
             self._sync_every()
@@ -897,9 +859,12 @@ class App:
     def schedule_sync(self, delay=3000):
         if not self.online or not self.config.get("sync", True):
             return
-        if self._sync_job:
-            self.root.after_cancel(self._sync_job)
-        self._sync_job = self.root.after(delay, self.sync_now)
+        try:
+            if self._sync_job:
+                self.root.after_cancel(self._sync_job)
+            self._sync_job = self.root.after(delay, self.sync_now)
+        except tk.TclError:
+            pass  # the app is closing; the next start syncs
 
     def sync_now(self):
         self._sync_job = None
@@ -908,6 +873,7 @@ class App:
             return
         self._syncing = True
         snapshot = self.log.shared()
+        sudoku_snapshot = self.sudoku.shared()
         repo = self.config.get("sync_repo") or sync.DEFAULT_REPO
         token = self.config.get("sync_token") or None
 
@@ -916,17 +882,28 @@ class App:
                 tok = token or sync.gh_cli_token()
                 if not tok:
                     raise sync.SyncError("no GitHub token yet - add one in Settings")
-                self._sync_results.put(("ok", sync.sync(snapshot, sync.GitHubFile(repo, tok))))
+                self._sync_results.put(("events", sync.sync(snapshot, sync.GitHubFile(repo, tok))))
+                self._sync_results.put(("sudoku", sync.sync_sudoku(sudoku_snapshot, sync.GitHubFile(repo, tok, sync.SUDOKU_PATH))))
+                self._sync_results.put(("done", None))
             except Exception as e:  # never let a network problem take the app down
                 self._sync_results.put(("error", str(e)))
 
         threading.Thread(target=work, daemon=True).start()
 
     def _sync_done(self, kind, value):
-        self._syncing = False
-        if kind == "ok":
+        if kind == "events":
             if self.log.apply_shared(value):
                 self.refresh_counts()
+            return
+        if kind == "sudoku":
+            if self.sudoku.apply_shared(value):
+                for view in list(self.sudoku_views):
+                    view.refresh()
+                if self.sudoku_win and self.sudoku_win.win.winfo_exists():
+                    self.sudoku_win.render_stats()
+            return
+        self._syncing = False
+        if kind == "done":
             self.sync_status = f"Synced at {datetime.now():%I:%M %p}".replace(" 0", " ")
         else:
             self.sync_status = f"Sync problem: {value}"
@@ -991,6 +968,20 @@ class App:
             self.menu.insert_command(0, label=label, command=self.restart_to_update)
             self.menu.insert_separator(1)
             self._update_menu_label = label
+        if not self._restart_watch:
+            self._restart_watch = True
+            self.root.after(RESTART_POLL_SECONDS * 1000, self._auto_restart)
+
+    def open_windows(self):
+        """Everything on screen besides the button: a lock, Sudoku, Settings, Progress, a heads-up."""
+        return [w for w in self.root.winfo_children() if isinstance(w, tk.Toplevel)]
+
+    def _auto_restart(self):
+        """Apply a downloaded update the moment nothing's open and the computer has been left alone."""
+        if restart_allowed(self.updater.ready, self.open_windows(), winapi.idle_seconds()):
+            self.restart_to_update()
+            return
+        self.root.after(RESTART_POLL_SECONDS * 1000, self._auto_restart)
 
     def restart_to_update(self):
         if self.lock is not None:
@@ -1006,6 +997,13 @@ class App:
             self.settings.win.focus_force()
         else:
             self.settings = SettingsWindow(self)
+
+    def open_sudoku(self):
+        if self.sudoku_win and self.sudoku_win.win.winfo_exists():
+            self.sudoku_win.win.lift()
+            self.sudoku_win.win.focus_force()
+        else:
+            self.sudoku_win = SudokuWindow(self)
 
     def place_button(self):
         """Put the button where the config says, falling back to the main monitor if that spot is gone."""
@@ -1094,13 +1092,24 @@ def run_preview(out_dir, stage):
     from PIL import ImageGrab
 
     out = Path(out_dir)
-    app = App(log=fake_log(out / "preview-events.json"), hotkey=False)
+    app = App(log=fake_log(out / "preview-events.json"), sudoku_log=fake_sudoku_log(out / "preview-sudoku.json"),
+              hotkey=False)
     app.save_config = lambda: None  # previews never touch the real settings
     app.config["reasons"] = ["I want my evenings back.", "Future me is proud of every one of these."]
     target = None
     if stage == "progress":
         target = ProgressWindow(app.root, app.log).win
         target.attributes("-topmost", True)
+    elif stage in ("sudokuwin", "sudokusolved", "sudokunew"):
+        app.open_sudoku()
+        target = app.sudoku_win.win
+        target.attributes("-topmost", True)
+        view = app.sudoku_win.view
+        if stage == "sudokusolved":  # finish the half-played puzzle so the "Solved" card shows
+            view.game.vals = list(view.game.sol)
+            view.after_move()
+        elif stage == "sudokunew":
+            view.choose()
     elif stage == "logged":
         target = LogOwnWindow(app).win
     elif stage == "settings":
