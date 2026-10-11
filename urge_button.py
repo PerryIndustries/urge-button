@@ -75,7 +75,7 @@ def friend_pick(cfg):
 
 
 def plural(n, word):
-    return f"{n} {word}" if n == 1 else f"{n} {word}s"
+    return f"{n} {word}" if n == 1 else f"{n} {word}{'es' if word.endswith('s') else 's'}"
 
 
 def intensity_picker(master, on_pick, selected=None):
