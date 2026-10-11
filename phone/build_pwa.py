@@ -94,11 +94,11 @@ rep("  function friend() {", """  function spotifyApp(url) {
   }
   function friend() {""")
 
-# Friend: open Messages with the text filled in.
+# Friend: open Messages with the text filled in (the lock's "Reach out" and the Bored sheet's "Text a friend" share this).
 rep('<div class="row" style="justify-content:center"><button class="btn primary" data-act="copy">Copy message</button>',
     '<div class="row" style="justify-content:center"><a class="btn primary" href="sms:&body=${encodeURIComponent(msg)}">Open Messages</a><button class="btn" data-act="copy">Copy</button>')
-rep('const done = () => { note.textContent = "Copied. Paste it into your messages."; };',
-    'const done = () => { note.textContent = "Copied."; };')
+rep('const done = () => { note.textContent = "Copied. Paste it into your messages."; if (after) after(); };',
+    'const done = () => { note.textContent = "Copied."; if (after) after(); };')
 
 # Local storage only: drop the claude.ai database code.
 cut("  async function connect() {", "  // ---------------------------------------------------------------- stats")
