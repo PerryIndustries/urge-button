@@ -65,8 +65,8 @@ rep("""    <p class="note">Add this page to your home screen so it opens like an
       <p class="note" id="backupNote">Your history lives on this phone only. Save a backup now and then and keep it in Files or iCloud Drive.</p>
     </div>
     <p class="note">A phone app can't lock the whole phone. If you leave during a lock, the timer keeps running, and the lock is still here when you come back. For a harder lock, turn on Guided Access (Settings, Accessibility, Guided Access) and triple-click the side button when the lock starts.</p>""")
-rep('$("setFriends").value = (S.settings.friends || []).join("\\n");\n  }',
-    '$("setFriends").value = (S.settings.friends || []).join("\\n");\n    $("setShortcut").value = S.settings.shortcut || "";\n  }')
+rep('$("setBored").value = boredIdeas().join("\\n");\n  }',
+    '$("setBored").value = boredIdeas().join("\\n");\n    $("setShortcut").value = S.settings.shortcut || "";\n  }')
 rep('S.settings = { lockMinutes: m, spotify: sp, friends:',
     'S.settings = { lockMinutes: m, spotify: sp, shortcut: $("setShortcut").value.trim(), friends:')
 rep('Object.assign({ lockMinutes: 3, spotify: "", friends: [] }, ls.get("urge.settings", {}))',
@@ -80,11 +80,13 @@ rep("""    showLock();
   }
   function showLock() {""")
 
-# Spotify: open the app itself.
-rep("""    const link = S.settings.spotify && /^https:\\/\\/open\\.spotify\\.com\\//.test(S.settings.spotify) ? S.settings.spotify : "https://open.spotify.com/";
-    stage(`<h2>Put some music on</h2><a class="link" href="${esc(link)}" target="_blank" rel="noopener">Open Spotify</a>""",
-    """    const link = spotifyApp(S.settings.spotify);
-    stage(`<h2>Put some music on</h2><a class="link" href="${esc(link)}">Open Spotify</a>""")
+# Spotify: open the app itself (from the lock's option and from the Bored panel's "Put music on").
+rep("""  function spotifyLink() { return S.settings.spotify && /^https:\\/\\/open\\.spotify\\.com\\//.test(S.settings.spotify) ? S.settings.spotify : "https://open.spotify.com/"; }
+  function openSpotify() { window.open(spotifyLink(), "_blank", "noopener"); }""",
+    """  function spotifyLink() { return spotifyApp(S.settings.spotify); }
+  function openSpotify() { location.href = spotifyLink(); }""")
+rep("""stage(`<h2>Put some music on</h2><a class="link" href="${esc(link)}" target="_blank" rel="noopener">Open Spotify</a>""",
+    """stage(`<h2>Put some music on</h2><a class="link" href="${esc(link)}">Open Spotify</a>""")
 rep("  function friend() {", """  function spotifyApp(url) {
     // open.spotify.com/playlist/ID?si=... -> spotify:playlist:ID, which opens the Spotify app itself
     const m = /open\\.spotify\\.com\\/(?:intl-[a-z-]+\\/)?(playlist|album|artist|track|show|episode)\\/([A-Za-z0-9]+)/.exec(url || "");
@@ -114,7 +116,7 @@ rep("""    if (!S.db) return;
 """, "")
 
 # Boot: backup/restore, ?start, offline.
-rep("""  connect();""", """  function backupSub() { $("backupSub").textContent = plural(events().length, "urge") + " and " + plural(S.sdkGames.length, "Sudoku game") + " saved on this phone"; }
+rep("""  connect();""", """  function backupSub() { $("backupSub").textContent = plural(urges().length, "urge") + ", " + plural(boreds().length, "Bored press") + " and " + plural(S.sdkGames.length, "Sudoku game") + " saved on this phone"; }
   $("exportBtn").addEventListener("click", () => {
     const body = JSON.stringify({ app: "urge-button", version: 1, months: S.months, settings: S.settings, sudoku: sdkShared() }, null, 2);
     $("exportBtn").href = URL.createObjectURL(new Blob([body], { type: "application/json" }));
