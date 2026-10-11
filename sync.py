@@ -6,8 +6,10 @@ Both apps read and write two files in the repo named in Settings (default PerryI
 Merging is safe to repeat, so a sync that loses a race just runs again.
 
 events.json: {"version": 1, "events": [
-    {"id", "t" (epoch ms), "kind", "minutes", "choices", "intensity_start", "intensity", "triggers", "u"}]}
+    {"id", "t" (epoch ms), "kind", "minutes", "choices", "intensity_start", "intensity", "triggers", "u",
+     and on a Bored press that ran an activity: "done", "seconds", "note", "amount"}]}
     `kind` is "lock" or "logged" for an urge and "bored" for a Bored press; they share the file and the merge.
+    The activity fields are only written when set, so a copy of the app from before them reads the same file.
 sudoku.json: {"version": 1, "games": [finished or abandoned games, see sudoku.py],
               "current": the puzzle in progress (the copy with the newer `u` wins) or null}
 """
@@ -23,13 +25,16 @@ from datetime import datetime
 DEFAULT_REPO = "PerryIndustries/urge-data"
 PATH = "events.json"
 SUDOKU_PATH = "sudoku.json"
-FIELDS = ("kind", "minutes", "choices", "intensity_start", "intensity", "triggers")
+FIELDS = ("kind", "minutes", "choices", "intensity_start", "intensity", "triggers", "done", "seconds", "note", "amount")
+SPARSE = ("done", "seconds", "note", "amount")  # how a Bored activity went: left out of the file when unset
 
 
 def to_shared(event):
     """PC event (local ISO `ts`) -> shared format (epoch ms `t`)."""
     out = {"id": event["id"], "t": int(datetime.fromisoformat(event["ts"]).timestamp() * 1000), "u": event.get("u", 0)}
     for f in FIELDS:
+        if f in SPARSE and event.get(f) is None:
+            continue
         out[f] = event.get(f)
     return out
 

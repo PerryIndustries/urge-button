@@ -7,10 +7,13 @@ Every urge is one event in events.json:
 
 A Bored press is an event in the same file with "kind": "bored" and "choices": [what you picked] (a
 BORED_IDEAS id, or the text of your own idea). It is tracked on its own: nothing that counts urges
-counts it.
+counts it. Picking an idea runs it as an activity in the panel, and how that went lands on the same
+event: "done" (True = finished, False = stopped early), "seconds" spent, "note" (what you wrote down,
+noticed outside, or are practicing) and "amount" (pages read). All four are optional.
 """
 
 import json
+import math
 import os
 import random
 import time
@@ -115,6 +118,98 @@ BORED_LINES = [
     "That'll do it. Off you go.",
     "Small thing, real thing. Enjoy it.",
 ]
+
+# What happens once you pick an idea. Sudoku and music open something else; everything else runs in the panel.
+JUMPS = ("sudoku", "music")
+STRETCHES = ["Neck rolls", "Shoulder rolls", "Reach up tall", "Side bend, each side", "Forward fold", "Chest opener"]
+STRETCH_SECONDS = 20
+SURFACES = ["your desk", "the nightstand", "the kitchen counter", "one shelf", "the floor around you"]
+ACTIVITY_SECONDS = {
+    "stretch": len(STRETCHES) * STRETCH_SECONDS,
+    "outside": 5 * 60,
+    "tidy": 5 * 60,
+    "read": 10 * 60,
+    "practice": 10 * 60,
+}
+CUSTOM_SECONDS = 5 * 60  # your own ideas get a plain five-minute timer
+
+FINISH_LINES = {
+    "stretch": "Looser already? Two minutes well spent.",
+    "write": "It's out of your head and on the page.",
+    "outside": "Fresh air beats the feed every time.",
+    "tidy": "One surface clearer. That counts.",
+    "read": "A few pages further than you were.",
+    "practice": "Ten minutes better at it than you were.",
+    "friend": "Sent. That's a real connection, not a scroll.",
+    "water": "Hydrated and a little less bored.",
+}
+DEFAULT_FINISH_LINES = [
+    "That's five minutes well spent.",
+    "Done is done. Nice one.",
+    "Small thing, real thing. Finished.",
+]
+STOP_LINES = [
+    "Stopped early. Noticing still counts.",
+    "Even a minute off the scroll is a minute.",
+]
+
+
+def finish_line(key, rng=random):
+    """The one line said when an activity is finished."""
+    return FINISH_LINES.get(key) or rng.choice(DEFAULT_FINISH_LINES)
+
+
+def activity_seconds(key):
+    """How long an idea's timer runs; your own ideas get the plain five minutes."""
+    return ACTIVITY_SECONDS.get(key, CUSTOM_SECONDS)
+
+
+def stretch_at(elapsed):
+    """Where the stretch routine is `elapsed` seconds in: (index, name, next name or None, seconds left in it).
+
+    None once the routine is over (or before it starts).
+    """
+    i = int(elapsed // STRETCH_SECONDS)
+    if elapsed < 0 or i >= len(STRETCHES):
+        return None
+    left = STRETCH_SECONDS - (elapsed - i * STRETCH_SECONDS)
+    return i, STRETCHES[i], STRETCHES[i + 1] if i + 1 < len(STRETCHES) else None, left
+
+
+def clock_text(seconds):
+    m, s = divmod(int(math.ceil(max(0, seconds))), 60)
+    return f"{m}:{s:02d}"
+
+
+class Countdown:
+    """A countdown that reads the clock instead of counting ticks, so a window that was put away stays right."""
+
+    def __init__(self, seconds, now=time.monotonic):
+        self.total = seconds
+        self.now = now
+        self.started = now()
+        self.paused_at = None
+        self.paused_for = 0.0
+
+    @property
+    def paused(self):
+        return self.paused_at is not None
+
+    def elapsed(self):
+        end = self.paused_at if self.paused else self.now()
+        return max(0.0, end - self.started - self.paused_for)
+
+    def remaining(self):
+        return max(0.0, self.total - self.elapsed())
+
+    def pause(self):
+        if not self.paused:
+            self.paused_at = self.now()
+
+    def resume(self):
+        if self.paused:
+            self.paused_for += self.now() - self.paused_at
+            self.paused_at = None
 
 
 def bored_ideas(cfg):
@@ -279,6 +374,24 @@ class EventLog:
 
     def record_intensity(self, event, intensity):
         event["intensity"] = int(intensity)
+        self._changed(event)
+
+    # how a Bored activity went
+
+    def record_outcome(self, event, done, seconds):
+        """How an activity ended: finished (Done) or stopped early, and the seconds spent on it."""
+        event["done"] = bool(done)
+        event["seconds"] = int(round(max(0, seconds)))
+        self._changed(event)
+
+    def record_note(self, event, text):
+        """What you wrote, noticed or are practicing. Blank clears it - that is how a note is deleted."""
+        event["note"] = (text or "").strip() or None
+        self._changed(event)
+
+    def record_amount(self, event, amount):
+        """A number that came out of an activity, like pages read."""
+        event["amount"] = int(amount)
         self._changed(event)
 
     def save(self):
@@ -529,6 +642,54 @@ class EventLog:
             for c in e.get("choices") or ["none"]:
                 counts[c] = counts.get(c, 0) + 1
         return sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+
+    def bored_picks(self, days=None):
+        """[(time, event, key)] Bored presses where something was picked, oldest first; key is the first pick."""
+        since = self._since(days)
+        return [(t, e, e["choices"][0]) for t, e in self.times(bored=True)
+                if e.get("choices") and not (since and t < since)]
+
+    def bored_finished(self, days=30):
+        """(finished, picks) over the window - picks that ran in the panel, and how many ended with Done.
+
+        Sudoku and music just open something, so they are left out of both numbers.
+        """
+        picks = [e for _, e, key in self.bored_picks(days) if key not in JUMPS]
+        return sum(1 for e in picks if e.get("done") is True), len(picks)
+
+    def bored_seconds(self, days=30):
+        """Seconds spent on Bored activities over the window."""
+        return sum(int(e.get("seconds") or 0) for _, e, _ in self.bored_picks(days))
+
+    def bored_idea_rows(self, days=None):
+        """[(idea key, times picked, times finished)] most picked first; "none" is a press dismissed without picking."""
+        since = self._since(days)
+        picked, finished = {}, {}
+        for t, e in self.times(bored=True):
+            if since and t < since:
+                continue
+            for c in e.get("choices") or ["none"]:
+                picked[c] = picked.get(c, 0) + 1
+                if e.get("done") is True:
+                    finished[c] = finished.get(c, 0) + 1
+        rows = [(c, n, finished.get(c, 0)) for c, n in picked.items()]
+        return sorted(rows, key=lambda r: (-r[1], r[0]))
+
+    def bored_notes(self):
+        """[(time, event)] every Bored press with a note, newest first."""
+        return [(t, e) for t, e in reversed(self.times(bored=True)) if (e.get("note") or "").strip()]
+
+    def last_note(self, key):
+        """The latest note saved on a pick of `key` (what you were practicing last time), or ''."""
+        for _, e in self.bored_notes():
+            if (e.get("choices") or [None])[0] == key:
+                return e["note"]
+        return ""
+
+    def glasses_today(self):
+        """Glasses of water drunk today from the Bored button (picked water and tapped Done)."""
+        start = start_of_day(self.now())
+        return sum(1 for t, e, key in self.bored_picks() if key == "water" and e.get("done") is True and t >= start)
 
     def bored_then_urge(self, days=30, minutes=BORED_URGE_WINDOW_MINUTES):
         """(how many Bored presses had an urge within `minutes`, how many Bored presses) over the window."""

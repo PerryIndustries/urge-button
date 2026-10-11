@@ -295,6 +295,116 @@ def test_bored_round_trips_through_sync(tmp_path):
     assert other.bored_choice_counts() == [("stretch", 1)]
 
 
+def test_activity_fields_round_trip_through_sync_and_stay_off_urges(tmp_path):
+    import sync
+    log = EventLog(tmp_path / "events.json", now=lambda: NOW)
+    urge = log.record_press(3)
+    e = log.record_bored()
+    log.record_choice(e, "read")
+    log.record_outcome(e, True, 601.4)
+    log.record_note(e, "  the river chapter  ")
+    log.record_amount(e, 12)
+    assert (e["done"], e["seconds"], e["note"], e["amount"]) == (True, 601, "the river chapter", 12)
+    shared = {s["id"]: s for s in log.shared()}
+    assert {k: shared[e["id"]][k] for k in ("done", "seconds", "note", "amount")} == {"done": True, "seconds": 601, "note": "the river chapter", "amount": 12}
+    assert not {"done", "seconds", "note", "amount"} & set(shared[urge["id"]])   # an urge never carries them
+    other = EventLog(tmp_path / "other.json", now=lambda: NOW)
+    assert other.apply_shared(sync.merge(log.shared(), []))
+    got = next(x for x in other.events if x["id"] == e["id"])
+    assert (got["done"], got["seconds"], got["note"], got["amount"]) == (True, 601, "the river chapter", 12)
+    plain = sync.from_shared({"id": "p", "t": 0, "u": 0, "kind": "bored", "choices": ["water"]})
+    assert plain["done"] is None and plain["note"] is None                      # older copies have none of them
+    assert sync.merge([dict(shared[e["id"]], mystery=1)], [])[0]["mystery"] == 1  # unknown fields pass through untouched
+
+
+def test_deleting_a_note_clears_it_and_bumps_u(tmp_path):
+    log = EventLog(tmp_path / "events.json", now=lambda: NOW)
+    e = log.record_bored()
+    log.record_choice(e, "write")
+    log.record_note(e, "call mum back")
+    before = e["u"]
+    assert [x["note"] for _, x in log.bored_notes()] == ["call mum back"]
+    e["u"] = before - 10  # make the bump visible even inside one millisecond
+    log.record_note(e, "")
+    assert e["note"] is None and e["u"] > before - 10
+    assert log.bored_notes() == []
+    assert "note" not in log.shared()[0]
+
+
+def test_notes_newest_first_and_last_practice_note(tmp_path):
+    log = make_log(tmp_path, [])
+    bored(log, NOW - timedelta(days=2), "practice")
+    log.events[-1]["note"] = "scales"
+    bored(log, NOW - timedelta(hours=3), "write")
+    log.events[-1]["note"] = "too many tabs open"
+    bored(log, NOW - timedelta(hours=1), "practice")
+    log.events[-1]["note"] = "the Bach prelude"
+    bored(log, NOW - timedelta(minutes=5), "water")               # no note
+    assert [e["note"] for _, e in log.bored_notes()] == ["the Bach prelude", "too many tabs open", "scales"]
+    assert log.last_note("practice") == "the Bach prelude"
+    assert log.last_note("read") == ""
+
+
+def test_finished_of_picked_minutes_and_idea_rows(tmp_path):
+    log = make_log(tmp_path, [])
+    bored(log, NOW - timedelta(hours=5), "write"); log.events[-1].update(done=True, seconds=60)
+    bored(log, NOW - timedelta(hours=4), "stretch"); log.events[-1].update(done=False, seconds=30)
+    bored(log, NOW - timedelta(hours=3), "read"); log.events[-1].update(done=True, seconds=600)
+    bored(log, NOW - timedelta(hours=2), "read")                   # closed the window mid-way: nothing recorded
+    bored(log, NOW - timedelta(hours=1), "sudoku")                 # a jump: never finished, never counted
+    bored(log, NOW - timedelta(minutes=30))                        # dismissed without picking
+    bored(log, NOW - timedelta(days=40), "write"); log.events[-1].update(done=True, seconds=120)   # outside 30 days
+    assert log.bored_finished(30) == (2, 4)
+    assert log.bored_seconds(30) == 690
+    assert log.bored_seconds(None) == 810
+    assert log.bored_idea_rows(30) == [("read", 2, 1), ("none", 1, 0), ("stretch", 1, 0), ("sudoku", 1, 0), ("write", 1, 1)]
+    assert log.today() == 0                                        # none of it is an urge
+
+
+def test_water_glasses_today(tmp_path):
+    log = make_log(tmp_path, [])
+    bored(log, NOW.replace(hour=9), "water"); log.events[-1].update(done=True, seconds=20)
+    bored(log, NOW.replace(hour=12), "water"); log.events[-1].update(done=True, seconds=15)
+    bored(log, NOW.replace(hour=14), "water")                      # picked, never tapped "I drank it"
+    bored(log, NOW.replace(hour=14, minute=30), "stretch"); log.events[-1].update(done=True, seconds=120)
+    bored(log, NOW.replace(hour=20) - timedelta(days=1), "water"); log.events[-1].update(done=True, seconds=20)
+    assert log.glasses_today() == 2
+
+
+def test_stretch_schedule():
+    from urge_log import STRETCHES, activity_seconds, stretch_at
+    assert len(STRETCHES) == 6 and activity_seconds("stretch") == 120
+    assert stretch_at(0) == (0, "Neck rolls", "Shoulder rolls", 20)
+    assert stretch_at(19.5)[0] == 0 and stretch_at(19.5)[3] == 0.5
+    assert stretch_at(20)[:3] == (1, "Shoulder rolls", "Reach up tall")
+    assert stretch_at(100) == (5, "Chest opener", None, 20)
+    assert stretch_at(120) is None and stretch_at(-1) is None
+    assert activity_seconds("outside") == 300 and activity_seconds("read") == 600 and activity_seconds("Juggle") == 300
+
+
+def test_countdown_reads_the_clock_not_the_ticks():
+    from urge_log import Countdown, clock_text
+    clock = [1000.0]
+    c = Countdown(300, now=lambda: clock[0])
+    clock[0] += 125
+    assert c.remaining() == 175 and c.elapsed() == 125
+    c.pause()
+    clock[0] += 60                                   # a minute goes by while paused: nothing moves
+    assert c.remaining() == 175 and c.paused
+    c.resume()
+    clock[0] += 10
+    assert c.remaining() == 165 and not c.paused
+    clock[0] += 1000                                 # the window sat in the background past the end
+    assert c.remaining() == 0 and c.elapsed() == 1135   # 125 + 10 + 1000: the paused minute is not in it
+    assert clock_text(175) == "2:55" and clock_text(0.2) == "0:01" and clock_text(0) == "0:00"
+
+
+def test_finish_lines():
+    from urge_log import DEFAULT_FINISH_LINES, finish_line
+    assert finish_line("stretch") == "Looser already? Two minutes well spent."
+    assert finish_line("Juggle", rng=random.Random(2)) in DEFAULT_FINISH_LINES
+
+
 def test_pick_ideas_gives_three_different_ones_and_shuffles():
     from urge_log import BORED_IDEAS, pick_ideas
     ideas = [text for _, text in BORED_IDEAS]
