@@ -47,9 +47,9 @@ from sudoku import SudokuLog
 from sudoku_ui import SudokuView, SudokuWindow, fake_sudoku_log
 from theme import ACCENT, BAD, BG, CALM, FONT, GOOD, MUTED, PANEL, PANEL_HI, TEXT, WARN, button, mix, px
 from urge_log import (
-    BORED_IDEAS, BORED_LINES, CONFIG_PATH, MAX_LOCK_MINUTES, OPTIONS, TRIGGERS, EventLog, bored_ideas, bored_key,
-    clamp_minutes, cluster_minutes, format_gap, heads_up_due, hour_name, load_config, pick_ideas, save_json,
-    to_spotify_uri,
+    BORED_IDEAS, CONFIG_PATH, MAX_LOCK_MINUTES, OPTIONS, STOP_LINES, STRETCHES, SURFACES, TRIGGERS, Countdown,
+    EventLog, activity_seconds, bored_ideas, bored_key, bored_name, clamp_minutes, clock_text, cluster_minutes,
+    finish_line, format_gap, heads_up_due, hour_name, load_config, pick_ideas, save_json, stretch_at, to_spotify_uri,
 )
 
 FRIEND_PROMPTS = [
@@ -65,6 +65,17 @@ FIELD = dict(bg=PANEL, fg=TEXT, insertbackground=TEXT, relief="flat", highlightt
              highlightbackground=PANEL_HI, highlightcolor=ACCENT)
 
 INTENSITY_LABELS = {1: "mild", 2: "", 3: "medium", 4: "", 5: "intense"}
+
+
+def friend_pick(cfg):
+    """Who to text and what to say: (name, message, your friends list). Shared by the lock and the Bored panel."""
+    friends = [f for f in cfg.get("friends", []) if f.strip()]
+    who = random.choice(friends) if friends else "someone you haven't talked to in a while"
+    return who, random.choice(FRIEND_PROMPTS), friends
+
+
+def plural(n, word):
+    return f"{n} {word}" if n == 1 else f"{n} {word}s"
 
 
 def intensity_picker(master, on_pick, selected=None):
@@ -332,12 +343,11 @@ class LockScreen:
 
     def show_friend(self):
         self.clear_stage()
-        friends = [f for f in self.app.config.get("friends", []) if f.strip()]
-        who = random.choice(friends) if friends else "someone you haven't talked to in a while"
+        who, msg, friends = friend_pick(self.app.config)
         self.heading("Reach out")
         tk.Label(self.stage, text=f"Pick up your phone and text {who}:", font=(FONT, 14), fg=MUTED,
                  bg=BG).pack(pady=(12, 6))
-        tk.Label(self.stage, text=f"“{random.choice(FRIEND_PROMPTS)}”", font=(FONT, 16, "italic"),
+        tk.Label(self.stage, text=f"“{msg}”", font=(FONT, 16, "italic"),
                  fg=TEXT, bg=PANEL, padx=20, pady=14, wraplength=px(700)).pack()
         row = tk.Frame(self.stage, bg=BG)
         row.pack(pady=(14, 0))
@@ -461,42 +471,83 @@ class HeadsUp:
 
 
 class BoredPanel:
-    """Bored? Three quick ideas in a small panel beside the button - no lock.
+    """Bored? Three quick ideas in a small panel beside the button - no lock - and the one you pick runs right there.
 
     The press is on the record the moment the panel opens; picking an idea adds it to that event, and
-    closing without picking leaves it as just a press.
+    closing without picking leaves it as just a press. Sudoku and music open something else; every other
+    idea grows the panel into an activity (a timer, a text box, a friend to text, a glass of water) that
+    ends with Done or Stop, and how it went lands on the same event. The panel never locks anything and
+    the ✕ closes it at any point - mid-activity that counts as stopping early.
     """
 
     FAREWELL_MS = 2500
+    WIDTH, WIDE = 340, 380
+    NOTES_PER_PAGE = 6
 
     def __init__(self, app):
         self.app = app
         self.event = app.log.record_bored()
         self.shown = []
+        self.key = None            # the activity running, once you have picked one
+        self.text = ""
+        self.countdown = None
+        self.opened_at = None
+        self.ended = False
+        self.follow_up = None      # a question to ask when a timer ends with Done (outside, read)
+        self.on_tick = None        # (elapsed, left) -> (big text, small text), for the stretch routine
+        self._tick_job = None
         w = self.win = tk.Toplevel(app.root, bg=CALM)
         w.overrideredirect(True)
         w.attributes("-topmost", True)
         self.inner = tk.Frame(w, bg=PANEL, padx=px(16), pady=px(12))
         self.inner.pack(padx=2, pady=2)
         self.show_ideas()
-        beside_button(app, w)
 
-    def clear(self):
+    # -- the panel's shape
+
+    def clear(self, width=WIDTH):
         for child in self.inner.winfo_children():
             child.destroy()
-        tk.Frame(self.inner, bg=PANEL, width=px(340), height=1).pack()  # keeps the panel one width
+        tk.Frame(self.inner, bg=PANEL, width=px(width), height=1).pack()  # keeps the panel one width
+
+    def place(self):
+        """Back beside the button after the panel changes size, so it never runs off the screen."""
+        if self.win.winfo_exists():
+            beside_button(self.app, self.win)
+
+    def head(self, title):
+        head = tk.Frame(self.inner, bg=PANEL)
+        head.pack(fill="x")
+        tk.Label(head, text=title, font=(FONT, 12, "bold"), fg=TEXT, bg=PANEL, anchor="w",
+                 wraplength=px(self.WIDE - 40), justify="left").pack(side="left")
+        close = tk.Label(head, text="✕", font=(FONT, 10), fg=MUTED, bg=PANEL, cursor="hand2", padx=4)
+        close.pack(side="right", anchor="n")
+        close.bind("<Button-1>", lambda e: self.close())
+
+    def note(self, text, top=2, bottom=8, fg=MUTED, size=10):
+        tk.Label(self.inner, text=text, font=(FONT, size), fg=fg, bg=PANEL, anchor="w", justify="left",
+                 wraplength=px(self.WIDE - 10)).pack(fill="x", pady=(top, bottom))
+
+    def bar(self):
+        bar = tk.Frame(self.inner, bg=PANEL)
+        bar.pack(fill="x", pady=(8, 0))
+        return bar
+
+    def entry(self, default="", width=40):
+        e = tk.Entry(self.inner, width=width, font=(FONT, 11), **FIELD)
+        if default:
+            e.insert(0, default)
+        e.pack(fill="x", ipady=4)
+        e.focus_set()
+        e.bind("<Escape>", lambda ev: self.close())
+        return e
+
+    # -- picking
 
     def show_ideas(self):
         self.clear()
-        head = tk.Frame(self.inner, bg=PANEL)
-        head.pack(fill="x")
-        tk.Label(head, text="Bored? Pick one thing for five minutes.", font=(FONT, 12, "bold"), fg=TEXT, bg=PANEL,
-                 anchor="w").pack(side="left")
-        close = tk.Label(head, text="✕", font=(FONT, 10), fg=MUTED, bg=PANEL, cursor="hand2", padx=4)
-        close.pack(side="right")
-        close.bind("<Button-1>", lambda e: self.close())
-        tk.Label(self.inner, text="Something small and real. Scrolling doesn't count.", font=(FONT, 10), fg=MUTED,
-                 bg=PANEL, anchor="w").pack(fill="x", pady=(2, 8))
+        self.head("Bored? Pick one thing for five minutes.")
+        self.note("Something small and real. Scrolling doesn't count.")
         self.shown = pick_ideas(bored_ideas(self.app.config), avoid=self.shown)
         for text in self.shown:
             row = tk.Label(self.inner, text=text, font=(FONT, 11), fg=TEXT, bg=PANEL_HI, anchor="w", padx=px(12),
@@ -505,35 +556,340 @@ class BoredPanel:
             row.bind("<Button-1>", lambda e, t=text: self.pick(t))
             row.bind("<Enter>", lambda e, r=row: r.config(bg=mix(PANEL_HI, "#FFFFFF", 0.08)))
             row.bind("<Leave>", lambda e, r=row: r.config(bg=PANEL_HI))
-        bar = tk.Frame(self.inner, bg=PANEL)
-        bar.pack(fill="x", pady=(6, 0))
+        bar = self.bar()
         button(bar, "Show me others", self.show_ideas, size=10).pack(side="right")
         button(bar, "Just log it", self.just_log, size=10).pack(side="left")
+        if self.app.log.bored_notes():
+            button(bar, "Your notes", lambda: self.show_notes(back=self.show_ideas), size=10).pack(side="left", padx=(6, 0))
+        self.place()
 
     def pick(self, text):
         key = bored_key(text)
         self.app.log.record_choice(self.event, key)
         self.app.refresh_counts()
-        line = random.choice(BORED_LINES)
         if key == "sudoku":
             self.app.open_sudoku()
-            line = "Puzzle's up. Five minutes of that beats five of scrolling."
-        elif key == "music":
-            line = self.app.play_music() or "Music's coming on. Enjoy it."
-        self.farewell(line)
+            return self.farewell("Puzzle's up. Five minutes of that beats five of scrolling.")
+        if key == "music":
+            return self.farewell(self.app.play_music() or "Music's coming on. Enjoy it.")
+        self.start(key, text)
+
+    def start(self, key, text):
+        """Run the idea in the panel. Built-in ideas have their own activity; your own get a five-minute timer."""
+        self.key, self.text = key, text
+        self.opened_at = time.monotonic()
+        activities = {
+            "write": self.show_write, "stretch": self.show_stretch, "outside": self.show_outside,
+            "tidy": self.show_tidy, "read": self.show_read, "practice": self.show_practice,
+            "friend": self.show_friend, "water": self.show_water,
+        }
+        activities.get(key, self.show_custom)()
 
     def just_log(self):
         self.farewell("Logged. Noticing it counts for something.")
+
+    # -- the activities
+
+    def show_write(self):
+        self.clear(self.WIDE)
+        self.head("What's on your mind?")
+        self.note("Anything at all. Nobody reads this but you.")
+        self.box = tk.Text(self.inner, width=40, height=6, font=(FONT, 11), padx=6, pady=4, wrap="word", **FIELD)
+        self.box.pack(fill="x")
+        self.box.focus_set()
+        bar = self.bar()
+        button(bar, "Save", self.save_write, primary=True, size=10).pack(side="right")
+        notes = self.app.log.bored_notes()
+        if notes:
+            button(bar, f"Your notes ({len(notes)})", lambda: self.show_notes(back=self.show_write), size=10).pack(side="left")
+        self.place()
+
+    def save_write(self):
+        text = self.box.get("1.0", "end").strip()
+        if not text:
+            self.box.focus_set()
+            return
+        self.app.log.record_note(self.event, text)
+        self.end(True)
+
+    def show_notes(self, offset=0, back=None):
+        """Everything you have written down, newest first, a page at a time, with a Delete on each."""
+        back = back or self.show_ideas
+        notes = self.app.log.bored_notes()
+        self.clear(self.WIDE)
+        self.head("Your notes")
+        if not notes:
+            self.note("Nothing saved yet. Pick \"Write down what's on your mind\" and it lands here.", bottom=4)
+        offset = max(0, min(offset, max(0, len(notes) - 1)))
+        for t, e in notes[offset:offset + self.NOTES_PER_PAGE]:
+            row = tk.Frame(self.inner, bg=PANEL_HI, padx=px(10), pady=px(6))
+            row.pack(fill="x", pady=(0, px(4)))
+            top = tk.Frame(row, bg=PANEL_HI)
+            top.pack(fill="x")
+            tk.Label(top, text=f"{t:%a %d %b, %I:%M %p}".replace(" 0", " "), font=(FONT, 8), fg=MUTED,
+                     bg=PANEL_HI, anchor="w").pack(side="left")
+            delete = tk.Label(top, text="Delete", font=(FONT, 8), fg=MUTED, bg=PANEL_HI, cursor="hand2")
+            delete.pack(side="right")
+            delete.bind("<Button-1>", lambda ev, e=e, o=offset: self.delete_note(e, o, back))
+            delete.bind("<Enter>", lambda ev, d=delete: d.config(fg=BAD))
+            delete.bind("<Leave>", lambda ev, d=delete: d.config(fg=MUTED))
+            tk.Label(row, text=e["note"], font=(FONT, 10), fg=TEXT, bg=PANEL_HI, anchor="w", justify="left",
+                     wraplength=px(self.WIDE - 30)).pack(fill="x", pady=(2, 0))
+        bar = self.bar()
+        button(bar, "Back", back, size=10).pack(side="right")
+        if offset + self.NOTES_PER_PAGE < len(notes):
+            button(bar, "Older", lambda: self.show_notes(offset + self.NOTES_PER_PAGE, back), size=10).pack(side="left")
+        if offset > 0:
+            button(bar, "Newer", lambda: self.show_notes(max(0, offset - self.NOTES_PER_PAGE), back), size=10).pack(
+                side="left", padx=(6, 0))
+        if len(notes) > self.NOTES_PER_PAGE:
+            tk.Label(bar, text=f"{offset + 1}-{min(offset + self.NOTES_PER_PAGE, len(notes))} of {len(notes)}",
+                     font=(FONT, 9), fg=MUTED, bg=PANEL).pack(side="left", padx=(10, 0))
+        self.place()
+
+    def delete_note(self, event, offset, back):
+        self.app.log.record_note(event, "")
+        self.show_notes(offset, back)
+
+    def show_stretch(self):
+        self.now_label = None
+        self.run_timer("Stretch for 2 minutes", activity_seconds("stretch"),
+                       lines=[f"Six stretches, twenty seconds each: {', '.join(s.lower() for s in STRETCHES)}."],
+                       extra=self.stretch_names)
+        self.on_tick = self.stretch_tick
+        self.tick()
+
+    def stretch_names(self, body):
+        self.now_label = tk.Label(body, text="", font=(FONT, 15, "bold"), fg=TEXT, bg=PANEL, anchor="w")
+        self.now_label.pack(fill="x", pady=(6, 0))
+        self.next_label = tk.Label(body, text="", font=(FONT, 10), fg=MUTED, bg=PANEL, anchor="w")
+        self.next_label.pack(fill="x")
+
+    def stretch_tick(self, elapsed, left):
+        at = stretch_at(elapsed)
+        if at is None:
+            return "0", ""
+        i, name, nxt, in_this = at
+        if self.now_label and self.now_label.winfo_exists():
+            self.now_label.config(text=f"Now: {name}")
+            self.next_label.config(text=f"Next: {nxt}" if nxt else "Last one.")
+        return str(int(math.ceil(in_this))), f"{i + 1} of {len(STRETCHES)}  ·  {clock_text(left)} in all"
+
+    def show_outside(self):
+        self.follow_up = lambda: self.ask_text("What did you notice?", "see, hear, feel - one line is plenty")
+        self.run_timer("Step outside for 5 minutes", activity_seconds("outside"),
+                       lines=["Notice 3 things: something you see, hear, and feel.", "The timer keeps going while you're out."])
+
+    def show_tidy(self):
+        self.surface = random.choice(SURFACES)
+
+        def extra(body):
+            self.surface_label = tk.Label(body, text="", font=(FONT, 15, "bold"), fg=TEXT, bg=PANEL, anchor="w",
+                                          wraplength=px(self.WIDE - 10), justify="left")
+            self.surface_label.pack(fill="x", pady=(6, 4))
+            button(body, "Different one", self.other_surface, size=10).pack(anchor="w")
+
+        self.run_timer("Tidy one surface", activity_seconds("tidy"),
+                       lines=["Five minutes, one spot. Not the whole room."], extra=extra)
+        self.other_surface(keep=True)
+
+    def other_surface(self, keep=False):
+        if not keep:
+            self.surface = random.choice([s for s in SURFACES if s != self.surface])
+        self.surface_label.config(text=f"Clear {self.surface}.")
+
+    def show_read(self):
+        self.follow_up = self.ask_pages
+        self.run_timer("Read a few pages", activity_seconds("read"),
+                       lines=["Ten minutes. A real book or an article you've been meaning to read, not a feed."])
+
+    def show_practice(self):
+        self.clear(self.WIDE)
+        self.head("Practice something you're learning")
+        self.note("What are you practicing?")
+        self.box = self.entry(self.app.log.last_note("practice"))
+        self.box.bind("<Return>", lambda e: self.start_practice())
+        bar = self.bar()
+        button(bar, "Start 10 minutes", self.start_practice, primary=True, size=10).pack(side="right")
+        self.place()
+
+    def start_practice(self):
+        what = self.box.get().strip()
+        if what:
+            self.app.log.record_note(self.event, what)
+        self.run_timer(f"Practice: {what}" if what else "Practice", activity_seconds("practice"),
+                       lines=["Ten minutes on it. Slow and deliberate beats fast and sloppy."])
+
+    def show_custom(self):
+        self.run_timer(self.text, activity_seconds(self.key),
+                       lines=["Five minutes on it. The timer keeps going if you step away."])
+
+    def show_friend(self):
+        self.clear(self.WIDE)
+        self.head("Text a friend")
+        who, msg, friends = friend_pick(self.app.config)
+        self.message = msg
+        self.note(f"Pick up your phone and text {who}:", bottom=4)
+        tk.Label(self.inner, text=f"“{msg}”", font=(FONT, 12, "italic"), fg=TEXT, bg=PANEL_HI, padx=px(12), pady=px(10),
+                 wraplength=px(self.WIDE - 40), justify="left", anchor="w").pack(fill="x")
+        if not friends:
+            self.note("Tip: add your people in Settings (right-click the button).", top=6, bottom=0, size=9)
+        row = tk.Frame(self.inner, bg=PANEL)
+        row.pack(fill="x", pady=(8, 0))
+        button(row, "Copy", self.copy_message, size=10).pack(side="left")
+        button(row, "Someone else" if len(friends) > 1 else "Different message", self.show_friend, size=10).pack(
+            side="left", padx=(6, 0))
+        bar = self.bar()
+        button(bar, "I texted them", lambda: self.end(True), primary=True, size=10).pack(side="right")
+        self.place()
+
+    def copy_message(self):
+        self.win.clipboard_clear()
+        self.win.clipboard_append(self.message)
+        self.end(True, line="Copied. Go send it.")
+
+    def show_water(self):
+        self.clear()
+        self.head("Drink a glass of water")
+        tk.Label(self.inner, text="Go get a glass. A full one.", font=(FONT, 14), fg=TEXT, bg=PANEL, anchor="w").pack(
+            fill="x", pady=(8, 2))
+        glasses = self.app.log.glasses_today()
+        self.note(f"{plural(glasses, 'glass')} today from here so far." if glasses else "First one today.", bottom=0)
+        bar = self.bar()
+        button(bar, "Done, I drank it", self.drank, primary=True, size=10).pack(side="right")
+        self.place()
+
+    def drank(self):
+        n = self.app.log.glasses_today() + 1
+        self.end(True, line=f"That's {plural(n, 'glass')} today. Hydrated and a little less bored.")
+
+    # -- timers
+
+    def run_timer(self, title, seconds, lines=(), extra=None):
+        """A timed activity: guidance, a big countdown read from the clock, and Pause, Stop and Done."""
+        self.clear(self.WIDE)
+        self.head(title)
+        body = tk.Frame(self.inner, bg=PANEL)
+        body.pack(fill="x", pady=(4, 0))
+        for line in lines:
+            tk.Label(body, text=line, font=(FONT, 10), fg=MUTED, bg=PANEL, anchor="w", justify="left",
+                     wraplength=px(self.WIDE - 10)).pack(fill="x", pady=(2, 0))
+        if extra:
+            extra(body)
+        self.clock = tk.Label(self.inner, text="", font=(FONT, 40, "bold"), fg=GOOD, bg=PANEL)
+        self.clock.pack(pady=(px(8), 0))
+        self.clock_sub = tk.Label(self.inner, text="", font=(FONT, 9), fg=MUTED, bg=PANEL)
+        self.clock_sub.pack()
+        bar = self.bar()
+        button(bar, "Done", lambda: self.end(True), primary=True, size=10).pack(side="right")
+        button(bar, "Stop", lambda: self.end(False), size=10).pack(side="right", padx=(0, 6))
+        self.pause_btn = button(bar, "Pause", self.toggle_pause, size=10)
+        self.pause_btn.pack(side="left")
+        self.countdown = Countdown(seconds)
+        self.on_tick = None
+        self.tick()
+        self.place()
+
+    def toggle_pause(self):
+        if self.countdown.paused:
+            self.countdown.resume()
+            self.pause_btn.config(text="Pause")
+            self.tick()
+        else:
+            self.countdown.pause()
+            self.pause_btn.config(text="Resume")
+            self.clock_sub.config(text="Paused. The clock waits for you.")
+
+    def tick(self):
+        if self._tick_job:
+            self.win.after_cancel(self._tick_job)
+            self._tick_job = None
+        if self.ended or not self.win.winfo_exists() or not self.countdown or self.countdown.paused:
+            return
+        left = self.countdown.remaining()
+        big, small = (self.on_tick(self.countdown.elapsed(), left) if self.on_tick else (clock_text(left), ""))
+        self.clock.config(text=big)
+        self.clock_sub.config(text=small)
+        if left <= 0:
+            return self.end(True)
+        self._tick_job = self.win.after(250, self.tick)
+
+    def seconds_spent(self):
+        if self.countdown:
+            return self.countdown.elapsed()
+        return time.monotonic() - self.opened_at if self.opened_at else 0
+
+    # -- ending
+
+    def end(self, done, line=None):
+        """Record how it went, then a follow-up question (Done only) or the goodbye line."""
+        if self.ended:
+            return
+        self.ended = True
+        if self._tick_job:
+            self.win.after_cancel(self._tick_job)
+            self._tick_job = None
+        self.app.log.record_outcome(self.event, done, self.seconds_spent())
+        self.app.refresh_counts()
+        if done and self.follow_up:
+            return self.follow_up()
+        self.farewell(line or (finish_line(self.key) if done else random.choice(STOP_LINES)))
+
+    def ask_text(self, prompt, hint):
+        """One optional line, saved as the note."""
+        self.clear(self.WIDE)
+        self.head(prompt)
+        self.note(hint)
+        box = self.entry()
+
+        def save():
+            self.app.log.record_note(self.event, box.get())
+            self.farewell(finish_line(self.key))
+
+        box.bind("<Return>", lambda e: save())
+        bar = self.bar()
+        button(bar, "Save", save, primary=True, size=10).pack(side="right")
+        button(bar, "Skip", lambda: self.farewell(finish_line(self.key)), size=10).pack(side="right", padx=(0, 6))
+        self.place()
+
+    def ask_pages(self):
+        self.clear(self.WIDE)
+        self.head("How many pages?")
+        self.note("Roughly is fine.")
+        box = tk.Spinbox(self.inner, from_=0, to=999, width=6, font=(FONT, 12), **FIELD, buttonbackground=PANEL_HI)
+        box.pack(anchor="w")
+        box.focus_set()
+
+        def save():
+            try:
+                n = int(box.get())
+            except ValueError:
+                n = 0
+            if n > 0:
+                self.app.log.record_amount(self.event, n)
+            self.farewell(finish_line(self.key))
+
+        box.bind("<Return>", lambda e: save())
+        bar = self.bar()
+        button(bar, "Save", save, primary=True, size=10).pack(side="right")
+        button(bar, "Skip", lambda: self.farewell(finish_line(self.key)), size=10).pack(side="right", padx=(0, 6))
+        self.place()
 
     def farewell(self, line):
         self.clear()
         tk.Label(self.inner, text=line, font=(FONT, 12), fg=TEXT, bg=PANEL, anchor="w", wraplength=px(330),
                  justify="left").pack(fill="x", pady=(2, 2))
+        self.place()
         self.win.after(self.FAREWELL_MS, self.close)
 
     def close(self):
-        if self.win.winfo_exists():
-            self.win.destroy()
+        if not self.win.winfo_exists():
+            return
+        if self.key and not self.ended:  # closed mid-activity: that is stopping early
+            self.ended = True
+            self.app.log.record_outcome(self.event, False, self.seconds_spent())
+            self.app.refresh_counts()
+        self.win.destroy()
 
 
 class LogOwnWindow:
@@ -1268,12 +1624,23 @@ def run_preview(out_dir, stage):
         target = app.lock.win
     elif stage == "headsup":
         target = HeadsUp(app, 21).win
-    elif stage in ("bored", "boredpicked"):
+    elif stage.startswith("bored"):
+        # bored = the ideas; boredwrite / boredstretch / boredtimer (outside) / boredtidy / boredread / boredpractice /
+        # boredfriend / boredwater / boredcustom = that activity running; borednotes = your notes; borednoticed and
+        # boredpages = the questions after Done; boredpicked = the goodbye line after a finished activity
         app.bored()
-        target = app.bored_panel.win
-        if stage == "boredpicked":  # a plain nudge, so no Sudoku window or Spotify gets in the shot
-            panel = app.bored_panel
-            panel.pick(next((t for t in panel.shown if bored_key(t) not in ("sudoku", "music")), panel.shown[0]))
+        panel = app.bored_panel
+        target = panel.win
+        which = stage[len("bored"):]
+        key = {"timer": "outside", "noticed": "outside", "pages": "read", "picked": "water", "custom": "Juggle"}.get(which, which)
+        if which == "notes":
+            panel.show_notes()
+        elif which:
+            panel.start(key, bored_name(key))
+            if which in ("noticed", "pages"):
+                panel.end(True)
+            elif which == "picked":
+                panel.drank()  # the goodbye line stays up longer than the screenshot takes
     else:
         app.trigger(preview=True)
         target = app.lock.win

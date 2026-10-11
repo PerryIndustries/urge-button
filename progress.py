@@ -5,10 +5,24 @@ import tkinter as tk
 from datetime import timedelta
 
 from theme import (
-    ACCENT, ACCENT_SOFT, BG, CALM, CALM_SOFT, CHART_BG, FONT, GOOD, GRID, HEAT_CALM_HIGH, HEAT_CALM_LOW, HEAT_HIGH,
+    ACCENT, ACCENT_SOFT, BAD, BG, CALM, CALM_SOFT, CHART_BG, FONT, GOOD, GRID, HEAT_CALM_HIGH, HEAT_CALM_LOW, HEAT_HIGH,
     HEAT_LOW, HEAT_ZERO, MUTED, PANEL, TEXT, WARN, button, mix, px,
 )
-from urge_log import BORED_URGE_WINDOW_MINUTES, OPTION_NAMES, bored_name, format_gap
+from urge_log import BORED_URGE_WINDOW_MINUTES, JUMPS, OPTION_NAMES, bored_name, format_gap
+
+NOTES_SHOWN = 4  # the newest notes in Progress; the Bored panel's "Your notes" has them all
+
+
+def time_text(seconds):
+    """'-' for nothing, '45s' under a minute, then the usual 11m / 2h 5m."""
+    if not seconds:
+        return "-"
+    return f"{seconds}s" if seconds < 60 else format_gap(seconds)
+
+
+def shorten(text, limit=160):
+    text = " ".join(text.split())
+    return text if len(text) <= limit else text[:limit - 1].rstrip() + "…"
 
 HOURS = ["12a", "1a", "2a", "3a", "4a", "5a", "6a", "7a", "8a", "9a", "10a", "11a",
          "12p", "1p", "2p", "3p", "4p", "5p", "6p", "7p", "8p", "9p", "10p", "11p"]
@@ -367,50 +381,105 @@ class ProgressWindow:
         self.win.after(60_000, self._refresh)
 
     def boredom(self, cols):
-        """The Bored button's own column, in its own colour. Nothing here is an urge and nothing above is boredom."""
+        """The Bored button's own section, in its own colour. Nothing here is an urge and nothing above is boredom.
+
+        Two narrow columns side by side: the counts and the when-charts on the left, what you picked and
+        your notes on the right, so the whole section stays above the bottom of the screen.
+        """
         log = self.log
-        BW = px(420)
+        AW, BW = px(300), px(344)
         col = tk.Frame(cols, bg=BG)
         col.pack(side="left", anchor="n", padx=(px(10), 0))
         tk.Label(col, text="Boredom", font=(FONT, 14, "bold"), fg=TEXT, bg=BG, anchor="w").pack(fill="x")
         tk.Label(col, text="The Bored button, tracked apart from your urges.", font=(FONT, 9), fg=MUTED, bg=BG,
                  anchor="w").pack(fill="x", pady=(0, px(8)))
+        halves = tk.Frame(col, bg=BG)
+        halves.pack(fill="x")
+        left = tk.Frame(halves, bg=BG)
+        left.pack(side="left", anchor="n", padx=(0, px(6)))
+        right = tk.Frame(halves, bg=BG)
+        right.pack(side="left", anchor="n")
+
+        def tile_row():
+            row = tk.Frame(left, bg=BG)
+            row.pack(fill="x", pady=(0, px(10)))
+            return row
 
         # Boredom is neither good nor bad, so the comparisons stay plain numbers in a neutral colour.
-        tiles = tk.Frame(col, bg=BG)
-        tiles.pack(fill="x", pady=(0, px(10)))
-        self.tile(tiles, "Today", str(log.today(bored=True)), f"yesterday: {log.yesterday_by_now(bored=True)}",
-                  width=104, pad=12)
-        self.tile(tiles, "This week", str(log.this_week(bored=True)), f"last week: {log.last_week_by_now(bored=True)}",
-                  width=104, pad=12)
+        row = tile_row()
+        self.tile(row, "Today", str(log.today(bored=True)), f"yesterday: {log.yesterday_by_now(bored=True)}",
+                  width=140, pad=12)
+        self.tile(row, "This week", str(log.this_week(bored=True)), f"last week: {log.last_week_by_now(bored=True)}",
+                  width=140, pad=12)
+        # How the activities went: Sudoku and music just open something, so they stay out of "finished"
+        row = tile_row()
+        finished, picks = log.bored_finished(30)
+        self.tile(row, "Finished", f"{finished} of {picks}" if picks else "-", "of picks, last 30 days",
+                  GOOD if picks and finished >= picks / 2 else MUTED, width=140, pad=12)
+        self.tile(row, "Time on it", time_text(log.bored_seconds(30)), "last 30 days", width=140, pad=12)
+        row = tile_row()
         hit, total = log.bored_then_urge(30, BORED_URGE_WINDOW_MINUTES)
-        self.tile(tiles, "Bored, then an urge", f"{hit} of {total}" if total else "-", "within an hour, last 30 days",
-                  WARN if total and hit >= total / 2 else MUTED, width=182, pad=12)
+        self.tile(row, "Bored, then an urge", f"{hit} of {total}" if total else "-", "within an hour, last 30 days",
+                  WARN if total and hit >= total / 2 else MUTED, width=290, pad=12)
 
         # Last 30 days
-        c, tip = self.canvas(col, BW, px(130))
+        c, tip = self.canvas(left, AW, px(116))
         days = log.per_day(30, bored=True)
         counts = [v for _, v in days]
         titled(c, "Last 30 days", f"{plural(sum(counts), 'time')} you pressed Bored")
-        bar_chart(c, tip, (px(10), px(54), BW - px(26), px(70)), counts,
-                  {i: f"{days[i][0]:%d %b}" for i in (0, 7, 14, 21, 29)},
+        bar_chart(c, tip, (px(10), px(54), AW - px(26), px(56)), counts,
+                  {i: f"{days[i][0]:%d %b}" for i in (0, 10, 20, 29)},
                   [f"{d:%a %d %b}\nbored {plural(v, 'time')}" for d, v in days], highlight={29}, colours=(CALM_SOFT, CALM))
 
         # When it hits
-        c, tip = self.canvas(col, BW, px(176))
-        titled(c, "When boredom hits", "last 30 days by day and hour · brighter = more")
-        heatmap(c, tip, (px(10), px(54), BW - px(24), px(116)), log.heat(30, bored=True),
+        c, tip = self.canvas(left, AW, px(140))
+        titled(c, "When boredom hits", "last 30 days · brighter = more")
+        heatmap(c, tip, (px(10), px(54), AW - px(24), px(80)), log.heat(30, bored=True),
                 ramp=(HEAT_CALM_LOW, HEAT_CALM_HIGH), word="time")
 
-        # What you picked
-        picks = log.bored_choice_counts(30)[:5]
-        c, tip = self.canvas(col, BW, px(56) + px(22) * max(len(picks), 2))
+        # What you picked, and how often you finished it
+        rows = log.bored_idea_rows(30)[:5]
+        c, tip = self.canvas(right, BW, px(56) + px(22) * max(len(rows), 2))
         titled(c, "What you picked", "last 30 days · the five you reach for most")
-        if picks:
-            hbars(c, (px(16), px(52), BW - px(32), px(22) * len(picks)), [(bored_name(k), v, "", MUTED) for k, v in picks],
-                  label_w=200, note_w=0, colour=CALM_SOFT)
+        if rows:
+            hbars(c, (px(16), px(52), BW - px(32), px(22) * len(rows)),
+                  [(shorten(bored_name(k), 26), n, "" if k in JUMPS or k == "none" else f"{f} finished",
+                    GOOD if f else MUTED) for k, n, f in rows], label_w=166, note_w=62, colour=CALM_SOFT)
         else:
             c.create_text(BW / 2, px(80), text="Press Bored and pick something; it shows up here.", fill=MUTED, font=(FONT, 10))
+
+        self.notes(right, BW)
+
+    def notes(self, col, width):
+        """What you wrote down when you were bored: the newest few, each with a Delete."""
+        log = self.log
+        notes = log.bored_notes()
+        box = tk.Frame(col, bg=CHART_BG, padx=px(16), pady=px(12), width=width)
+        box.pack(fill="x", pady=(0, px(10)))
+        tk.Label(box, text="Your notes", font=(FONT, 12, "bold"), fg=TEXT, bg=CHART_BG, anchor="w").pack(fill="x")
+        tk.Label(box, text="what you wrote down when you were bored · newest first", font=(FONT, 9), fg=MUTED,
+                 bg=CHART_BG, anchor="w").pack(fill="x", pady=(0, px(4)))
+        if not notes:
+            tk.Label(box, text="Nothing yet. Pick \"Write down what's on your mind\" from the Bored button.",
+                     font=(FONT, 10), fg=MUTED, bg=CHART_BG, anchor="w", wraplength=px(width - 40),
+                     justify="left").pack(fill="x", pady=(px(6), 0))
+        for t, e in notes[:NOTES_SHOWN]:
+            row = tk.Frame(box, bg=CHART_BG)
+            row.pack(fill="x", pady=(px(6), 0))
+            top = tk.Frame(row, bg=CHART_BG)
+            top.pack(fill="x")
+            tk.Label(top, text=f"{t:%a %d %b, %I:%M %p}".replace(" 0", " "), font=(FONT, 8), fg=MUTED, bg=CHART_BG,
+                     anchor="w").pack(side="left")
+            delete = tk.Label(top, text="Delete", font=(FONT, 8), fg=MUTED, bg=CHART_BG, cursor="hand2")
+            delete.pack(side="right")
+            delete.bind("<Button-1>", lambda ev, e=e: (log.record_note(e, ""), self.render()))
+            delete.bind("<Enter>", lambda ev, d=delete: d.config(fg=BAD))
+            delete.bind("<Leave>", lambda ev, d=delete: d.config(fg=MUTED))
+            tk.Label(row, text=shorten(e["note"]), font=(FONT, 10), fg=TEXT, bg=CHART_BG, anchor="w", justify="left",
+                     wraplength=px(width - 40)).pack(fill="x")
+        if len(notes) > NOTES_SHOWN:
+            tk.Label(box, text=f"{len(notes) - NOTES_SHOWN} more under Your notes in the Bored panel.", font=(FONT, 9),
+                     fg=MUTED, bg=CHART_BG, anchor="w").pack(fill="x", pady=(px(8), 0))
 
     def _refresh(self):
         if self.win.winfo_exists():
@@ -421,8 +490,12 @@ def fake_log(path, days=40, seed=7):
     """Synthetic history for previews: evening-heavy, slowly improving."""
     import random
 
-    from urge_log import EventLog
+    from urge_log import EventLog, activity_seconds
 
+    notes = ["too many tabs open in my head, closing a few", "call mum back this week", "the thing at work isn't about me",
+             "I keep reaching for my phone when the room goes quiet", "idea: a walk before gaming, not after"]
+    noticed = ["a dog three doors down, the bins out, cold hands", "wind in the hedge, someone's radio, the step was wet"]
+    practising = ["guitar - the F chord", "Spanish verbs", "touch typing"]
     rng = random.Random(seed)
     log = EventLog(path)
     log.events = []
@@ -451,10 +524,24 @@ def fake_log(path, days=40, seed=7):
             t = day + timedelta(hours=min(23, max(0, int(rng.gauss(15, 4)))), minutes=rng.randrange(60))
             if t > end:
                 continue
-            pick = rng.choice(["sudoku", "sudoku", "stretch", "water", "outside", "read", "music", "write", "tidy", None])
-            log.events.append({"ts": t.isoformat(timespec="seconds"), "kind": "bored", "minutes": 0,
-                               "choices": [pick] if pick else [], "intensity_start": None, "intensity": None,
-                               "triggers": []})
+            pick = rng.choice(["sudoku", "sudoku", "stretch", "water", "outside", "read", "music", "write", "tidy",
+                               "practice", None])
+            e = {"ts": t.isoformat(timespec="seconds"), "kind": "bored", "minutes": 0,
+                 "choices": [pick] if pick else [], "intensity_start": None, "intensity": None, "triggers": []}
+            if pick and pick not in ("sudoku", "music"):  # the activity ran in the panel: how it went
+                e["done"] = rng.random() < 0.7
+                e["seconds"] = activity_seconds(pick) if e["done"] else rng.randrange(20, 200)
+                if pick == "water":
+                    e["seconds"] = rng.randrange(10, 40)
+                elif pick == "write":
+                    e["note"] = rng.choice(notes)
+                elif pick == "practice":
+                    e["note"] = rng.choice(practising)
+                elif pick == "outside" and e["done"] and rng.random() < 0.6:
+                    e["note"] = rng.choice(noticed)
+                elif pick == "read" and e["done"]:
+                    e["amount"] = rng.randrange(4, 20)
+            log.events.append(e)
             follow = t + timedelta(minutes=rng.randrange(10, 55))
             if rng.random() < 0.3 and follow <= end:
                 log.events.append({"ts": follow.isoformat(timespec="seconds"), "kind": "lock", "minutes": 3,
