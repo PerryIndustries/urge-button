@@ -1,12 +1,14 @@
 """Keep one urge history across the PC and the phone, in a private GitHub repo.
 
-Both apps read and write one file, `events.json`, in the repo named in Settings (default
-PerryIndustries/urge-data). Every event has an `id` and an `u` (last-updated, epoch ms); merging takes
-the union by id and, for the same id, the copy updated last. Merging is safe to repeat, so a sync
-that loses a race just runs again.
+Both apps read and write two files in the repo named in Settings (default PerryIndustries/urge-data):
+`events.json` for urges and `sudoku.json` for Sudoku games. Every record has an `id` and an `u`
+(last-updated, epoch ms); merging takes the union by id and, for the same id, the copy updated last.
+Merging is safe to repeat, so a sync that loses a race just runs again.
 
-Shared format, one event:
-    {"id", "t" (epoch ms), "kind", "minutes", "choices", "intensity_start", "intensity", "triggers", "u"}
+events.json: {"version": 1, "events": [
+    {"id", "t" (epoch ms), "kind", "minutes", "choices", "intensity_start", "intensity", "triggers", "u"}]}
+sudoku.json: {"version": 1, "games": [finished or abandoned games, see sudoku.py],
+              "current": the puzzle in progress (the copy with the newer `u` wins) or null}
 """
 
 import base64
@@ -19,6 +21,7 @@ from datetime import datetime
 
 DEFAULT_REPO = "PerryIndustries/urge-data"
 PATH = "events.json"
+SUDOKU_PATH = "sudoku.json"
 FIELDS = ("kind", "minutes", "choices", "intensity_start", "intensity", "triggers")
 
 
@@ -51,6 +54,27 @@ def merge(*lists):
             if cur is None or e.get("u", 0) > cur.get("u", 0):
                 best[e["id"]] = e
     return sorted(best.values(), key=lambda e: e.get("t", 0))
+
+
+def newer(a, b):
+    """Of two copies of one record (either may be missing), the one updated last; `a` wins a tie."""
+    if not isinstance(a, dict):
+        return b if isinstance(b, dict) else None
+    if not isinstance(b, dict):
+        return a
+    return b if b.get("u", 0) > a.get("u", 0) else a
+
+
+def merge_events_doc(remote, local):
+    remote, local = remote or {}, local or {}
+    return {"version": 1, "events": merge(remote.get("events") or [], local.get("events") or [])}
+
+
+def merge_sudoku(remote, local):
+    """sudoku.json: games are a union by id (latest `u` wins); `current` is whichever copy was saved last."""
+    remote, local = remote or {}, local or {}
+    return {"version": 1, "games": merge(remote.get("games") or [], local.get("games") or []),
+            "current": newer(remote.get("current"), local.get("current"))}
 
 
 def gh_cli_token():
@@ -86,20 +110,20 @@ class GitHubFile:
         except (urllib.error.URLError, OSError, ValueError) as e:
             raise SyncError(f"can't reach GitHub ({e})") from e
 
-    def read(self):
-        """(events, sha); ([], None) when the file doesn't exist yet."""
+    def read_json(self):
+        """(document, sha); (None, None) when the file doesn't exist yet."""
         status, body = self._call("GET")
         if status == 404:
-            return [], None
+            return None, None
         if status in (401, 403):
             raise SyncError("GitHub refused the token (check it has access to the data repo)")
         if status != 200:
             raise SyncError(f"GitHub said {status}")
-        data = json.loads(base64.b64decode(body.get("content", "")).decode("utf-8") or "{}")
-        return data.get("events", []), body.get("sha")
+        data = json.loads(base64.b64decode(body.get("content", "")).decode("utf-8") or "null")
+        return (data if isinstance(data, dict) else None), body.get("sha")
 
-    def write(self, events, sha):
-        payload = json.dumps({"version": 1, "events": events}, separators=(",", ":")).encode("utf-8")
+    def write_json(self, data, sha):
+        payload = json.dumps(data, separators=(",", ":")).encode("utf-8")
         body = {"message": "sync", "content": base64.b64encode(payload).decode()}
         if sha:
             body["sha"] = sha
@@ -110,14 +134,35 @@ class GitHubFile:
             raise SyncError(f"GitHub said {status} when saving")
         return True
 
+    # events.json, the older shape
+    def read(self):
+        data, sha = self.read_json()
+        return (data or {}).get("events", []), sha
 
-def sync(local_shared, remote_file, attempts=3):
-    """Merge local events with the repo's copy and write back if anything changed. Returns the merged list."""
+    def write(self, events, sha):
+        return self.write_json({"version": 1, "events": events}, sha)
+
+
+def sync_doc(local, remote_file, merge_docs, attempts=3):
+    """Merge a local document with the repo's copy and write back if we add anything. Returns the merged one.
+
+    merge_docs(remote, local) must accept None for either side and give the same answer when repeated.
+    """
     for _ in range(attempts):
-        remote, sha = remote_file.read()
-        merged = merge(remote, local_shared)
-        if merged == merge(remote):
-            return merged
-        if remote_file.write(merged, sha):
+        remote, sha = remote_file.read_json()
+        merged = merge_docs(remote, local)
+        if merged == merge_docs(remote, None):
+            return merged  # nothing new from this side
+        if remote_file.write_json(merged, sha):
             return merged
     raise SyncError("the data file kept changing; will try again later")
+
+
+def sync(local_shared, remote_file, attempts=3):
+    """events.json: merge local events with the repo's copy. Returns the merged list."""
+    return sync_doc({"events": local_shared}, remote_file, merge_events_doc, attempts)["events"]
+
+
+def sync_sudoku(local_doc, remote_file, attempts=3):
+    """sudoku.json: local_doc is SudokuLog.shared(). Returns the merged document."""
+    return sync_doc(local_doc, remote_file, merge_sudoku, attempts)
