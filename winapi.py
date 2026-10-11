@@ -177,9 +177,24 @@ def press_media_play():
     user32.keybd_event(VK_MEDIA_PLAY_PAUSE, 0, 2, 0)
 
 
-def single_instance():
-    kernel32.CreateMutexW(None, False, "UrgeButtonSingleInstance")
-    return ctypes.get_last_error() != 183  # ERROR_ALREADY_EXISTS
+_instance = None
+
+
+def single_instance(wait_seconds=0.0):
+    """True if this is the only copy running. With wait_seconds, wait that long for an older copy to
+    exit first - used by "Restart to update", where the new copy starts as the old one closes."""
+    import time
+    global _instance
+    deadline = time.monotonic() + wait_seconds
+    while True:
+        handle = kernel32.CreateMutexW(None, False, "UrgeButtonSingleInstance")
+        if ctypes.get_last_error() != 183:  # ERROR_ALREADY_EXISTS
+            _instance = handle
+            return True
+        kernel32.CloseHandle(handle)
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.3)
 
 
 def set_dpi_aware():

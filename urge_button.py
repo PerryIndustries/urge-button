@@ -33,6 +33,7 @@ from pathlib import Path
 import placement
 import sync
 from blocker import AppBlocker, running_apps
+from updater import CHECK_SECONDS, Updater
 import theme
 import winapi
 from progress import ProgressWindow, fake_log
@@ -571,6 +572,13 @@ class SettingsWindow:
         hotkey = "Ctrl+Alt+U also triggers the lock from anywhere." if app.hotkey_ok else \
             "Ctrl+Alt+U is taken by another app, so only the button works."
         tk.Label(left, text=hotkey, font=(FONT, 10), fg=MUTED, bg=BG, anchor="w").pack(fill="x", pady=(6, 0))
+        upd = tk.Frame(left, bg=BG)
+        upd.pack(fill="x", pady=(10, 0))
+        self.update_label = tk.Label(upd, text="", font=(FONT, 10), fg=MUTED, bg=BG, anchor="w",
+                                     wraplength=px(300), justify="left")
+        self.update_label.pack(side="left", fill="x", expand=True)
+        button(upd, "Check for updates", app.check_updates_now, size=10).pack(side="right")
+        self._watch_updates()
 
         # Right: the lock itself
         tk.Label(right, text="The lock", font=(FONT, 13, "bold"), fg=TEXT, bg=BG, anchor="w").pack(fill="x")
@@ -672,6 +680,13 @@ class SettingsWindow:
             self.block.delete("1.0", "end")
             self.block.insert("1.0", (text + "\n" if text else "") + name)
         self.running.set("Add a running app...")
+
+    def _watch_updates(self):
+        if self.win.winfo_exists():
+            u = self.app.updater
+            text = f"Update ready: {u.ready}. Restart from the button's menu." if u.ready else u.status
+            self.update_label.config(text="Updates: " + text, fg=GOOD if u.ready else MUTED)
+            self.win.after(1000, self._watch_updates)
 
     def _watch_sync(self):
         if self.win.winfo_exists():
@@ -819,6 +834,8 @@ class App:
         # Settings gear in the corner; its clicks never start a lock or a drag.
         gear = tk.Label(self.face, text="⚙", font=("Segoe UI Symbol", 11), fg=TEXT, bg=ACCENT, cursor="hand2")
         gear.place(relx=1.0, x=-px(4), y=px(1), anchor="ne")
+        self.update_dot = tk.Label(self.face, text="●", font=(FONT, 8), fg=GOOD, bg=ACCENT, cursor="hand2")
+        self.update_dot.bind("<Button-1>", lambda e: self.restart_to_update())
         gear.bind("<Button-1>", lambda e: self.open_settings())
         gear.bind("<Enter>", lambda e: gear.config(fg="#C9CCFF"))
         gear.bind("<Leave>", lambda e: gear.config(fg=TEXT))
@@ -842,6 +859,12 @@ class App:
         # Closing chosen apps during a lock and the cooldown after it
         self.app_blocker = AppBlocker()
         self._block_loop()
+
+        # Self-update from GitHub (like Rift Pen): check on start and every 6 hours
+        self.updater = Updater(Path(__file__).resolve().parent)
+        self._update_results = queue.Queue()
+        if hotkey:  # previews never touch git
+            self.root.after(20_000, self._check_updates)
 
         # Sync with the phone through the private data repo
         self.online = hotkey  # previews run offline
@@ -917,6 +940,8 @@ class App:
             self.trigger()
         while not self._sync_results.empty():
             self._sync_done(*self._sync_results.get_nowait())
+        while not self._update_results.empty():
+            self._update_done(self._update_results.get_nowait())
         self.root.after(150, self._poll_hotkey)
 
     def _tick_counts(self):
@@ -943,6 +968,37 @@ class App:
 
     def save_config(self):
         save_json(CONFIG_PATH, self.config)
+
+    # -- self-update
+
+    def _check_updates(self, repeat=True):
+        threading.Thread(target=lambda: self._update_results.put(self.updater.check()), daemon=True).start()
+        if repeat:
+            self.root.after(CHECK_SECONDS * 1000, self._check_updates)
+
+    def check_updates_now(self):
+        self.updater.status = "Checking..."
+        self._check_updates(repeat=False)
+
+    def _update_done(self, ready):
+        if not ready:
+            return
+        self.update_dot.place(relx=0.0, x=px(6), y=px(3), anchor="nw")
+        label = f"Restart to update ({ready[:40]})"
+        if getattr(self, "_update_menu_label", None) != label:
+            if getattr(self, "_update_menu_label", None):
+                self.menu.delete(0, 1)
+            self.menu.insert_command(0, label=label, command=self.restart_to_update)
+            self.menu.insert_separator(1)
+            self._update_menu_label = label
+
+    def restart_to_update(self):
+        if self.lock is not None:
+            return  # never in the middle of a lock; the update also applies at the next start
+        import subprocess
+        subprocess.Popen([str(winapi.pythonw()), str(winapi.SCRIPT), "--restarted"], cwd=str(winapi.SCRIPT.parent),
+                         creationflags=0x00000008 | 0x00000200)
+        self.root.destroy()
 
     def open_settings(self):
         if self.settings and self.settings.win.winfo_exists():
@@ -1098,7 +1154,7 @@ def main():
     if len(sys.argv) >= 3 and sys.argv[1] == "--preview":
         run_preview(sys.argv[2], sys.argv[3] if len(sys.argv) > 3 else "options")
         return
-    if not winapi.single_instance():
+    if not winapi.single_instance(wait_seconds=15 if "--restarted" in sys.argv else 0):
         return
     App().root.mainloop()
 
