@@ -30,11 +30,16 @@ def hour_name(h):
     return f"{h % 12 or 12} {'AM' if h < 12 else 'PM'}"
 
 
+def urges(events):
+    """The urges in events.json - Bored presses share the file but aren't one."""
+    return [e for e in events if isinstance(e, dict) and e.get("kind") != "bored"]
+
+
 def risky_hours(events, now, days=28):
     """Same rule as the apps: at least 4 urges in that hour over 28 days, and twice the hourly average."""
     since = now - timedelta(days=days)
     counts = [0] * 24
-    for e in events:
+    for e in urges(events):
         if not isinstance(e.get("t"), (int, float)):
             continue
         t = datetime.fromtimestamp(e["t"] / 1000, now.tzinfo)
@@ -51,7 +56,7 @@ def message(events, push, now):
     target = (now + timedelta(minutes=LEAD_MINUTES)).replace(minute=0, second=0, microsecond=0)
     if target.hour not in risky_hours(events, now):
         return None
-    last = max((e["t"] for e in events if isinstance(e.get("t"), (int, float))), default=None)
+    last = max((e["t"] for e in urges(events) if isinstance(e.get("t"), (int, float))), default=None)
     if last is not None and now.timestamp() * 1000 - last < QUIET_AFTER_URGE * 60_000:
         return None
     plan = (push.get("plan") or "").strip()

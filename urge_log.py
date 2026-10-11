@@ -4,10 +4,15 @@ Every urge is one event in events.json:
     {"ts": "2026-10-10T21:14:03", "kind": "lock" | "logged", "minutes": 3,
      "choices": ["walk", ...], "intensity": 1-5 or null}
 "lock" = the button was pressed and the screen locked; "logged" = handled it without locking.
+
+A Bored press is an event in the same file with "kind": "bored" and "choices": [what you picked] (a
+BORED_IDEAS id, or the text of your own idea). It is tracked on its own: nothing that counts urges
+counts it.
 """
 
 import json
 import os
+import random
 import time
 import uuid
 from datetime import datetime, timedelta
@@ -38,6 +43,7 @@ DEFAULT_CONFIG = {
     "sync_token": "",            # blank = use this computer's GitHub CLI login
     "sync": True,
     "escalate": True,            # longer locks when urges come close together
+    "bored_ideas": [],           # your own lines for the Bored button; blank = the BORED_IDEAS defaults
 }
 
 HEADS_UP_MINUTES = 10
@@ -83,6 +89,60 @@ OPTIONS = [
 OPTION_NAMES = {key: title for key, title, _ in OPTIONS}
 
 TRIGGERS = ["Bored", "Stressed", "Lonely", "Tired", "Anxious", "Late night", "After gaming", "Something I saw", "Other"]
+
+# The Bored button's default ideas. "sudoku" opens the Sudoku and "music" puts Spotify on; the rest are nudges.
+BORED_IDEAS = [
+    ("sudoku", "Play Sudoku"),
+    ("stretch", "Stretch for 2 minutes"),
+    ("tidy", "Tidy one surface"),
+    ("water", "Drink a glass of water"),
+    ("outside", "Step outside for 5 minutes"),
+    ("read", "Read a few pages"),
+    ("music", "Put music on"),
+    ("practice", "Practice something you're learning"),
+    ("write", "Write down what's on your mind"),
+    ("friend", "Text a friend"),
+]
+BORED_NAMES = {key: text for key, text in BORED_IDEAS}
+BORED_NAMES["none"] = "Just logged it"
+BORED_KEYS = {text.lower(): key for key, text in BORED_IDEAS}
+BORED_IDEAS_PICKED = 3        # how many ideas the panel shows at once
+BORED_URGE_WINDOW_MINUTES = 60  # an urge this soon after a Bored press counts as "bored, then an urge"
+
+BORED_LINES = [
+    "Nice. Five minutes, then see how you feel.",
+    "Good call. Go do the thing.",
+    "That'll do it. Off you go.",
+    "Small thing, real thing. Enjoy it.",
+]
+
+
+def bored_ideas(cfg):
+    """The ideas to offer: your own lines from Settings, or the defaults when there are none."""
+    own = [line.strip() for line in (cfg.get("bored_ideas") or []) if line.strip()]
+    return own or [text for _, text in BORED_IDEAS]
+
+
+def bored_key(text):
+    """What gets logged for an idea: a built-in's id when the text is one of them, else the text itself."""
+    return BORED_KEYS.get(text.strip().lower(), text.strip())
+
+
+def bored_name(key):
+    return BORED_NAMES.get(key, key)
+
+
+def pick_ideas(ideas, avoid=(), n=BORED_IDEAS_PICKED, rng=random):
+    """`n` different ideas at random, steering clear of the ones just shown when there are enough to do so."""
+    ideas = list(dict.fromkeys(ideas))  # keep order, drop duplicates
+    fresh = [i for i in ideas if i not in avoid]
+    pool = fresh if len(fresh) >= n else ideas
+    return rng.sample(pool, min(n, len(pool)))
+
+
+def is_urge(event):
+    """Everything in the log is an urge except a Bored press (the oldest events have no kind at all)."""
+    return event.get("kind", "lock") != "bored"
 
 
 def strength(event):
@@ -200,6 +260,10 @@ class EventLog:
     def record_logged(self, intensity=None, triggers=None):
         return self._add("logged", 0, intensity, triggers)
 
+    def record_bored(self):
+        """A Bored press. What you pick goes into its choices (record_choice); dismissing it leaves them empty."""
+        return self._add("bored", 0)
+
     def record_start_intensity(self, event, intensity):
         event["intensity_start"] = int(intensity)
         self._changed(event)
@@ -246,10 +310,17 @@ class EventLog:
         return changed
 
     # -- reading
+    # Every stat is about urges unless asked for the Bored presses (`bored=True`): the two never mix.
 
-    def times(self):
+    def urges(self):
+        return [e for e in self.events if is_urge(e)]
+
+    def times(self, bored=False):
+        """[(time, event)] in order: the urges, or with `bored` the Bored presses."""
         out = []
         for e in self.events:
+            if is_urge(e) == bored:
+                continue
             try:
                 out.append((datetime.fromisoformat(e["ts"]), e))
             except (KeyError, TypeError, ValueError):
@@ -257,30 +328,30 @@ class EventLog:
         out.sort(key=lambda p: p[0])
         return out
 
-    def count_between(self, start, end):
-        return sum(1 for t, _ in self.times() if start <= t < end)
+    def count_between(self, start, end, bored=False):
+        return sum(1 for t, _ in self.times(bored) if start <= t < end)
 
-    def today(self):
+    def today(self, bored=False):
         now = self.now()
-        return self.count_between(start_of_day(now), now + timedelta(seconds=1))
+        return self.count_between(start_of_day(now), now + timedelta(seconds=1), bored)
 
-    def yesterday_by_now(self):
+    def yesterday_by_now(self, bored=False):
         """Urges yesterday up to the same time of day - a fair comparison mid-day."""
         now = self.now()
         y = now - timedelta(days=1)
-        return self.count_between(start_of_day(y), y + timedelta(seconds=1))
+        return self.count_between(start_of_day(y), y + timedelta(seconds=1), bored)
 
     def week_start(self, dt):
         return start_of_day(dt) - timedelta(days=dt.weekday())
 
-    def this_week(self):
+    def this_week(self, bored=False):
         now = self.now()
-        return self.count_between(self.week_start(now), now + timedelta(seconds=1))
+        return self.count_between(self.week_start(now), now + timedelta(seconds=1), bored)
 
-    def last_week_by_now(self):
+    def last_week_by_now(self, bored=False):
         now = self.now()
         then = now - timedelta(days=7)
-        return self.count_between(self.week_start(then), then + timedelta(seconds=1))
+        return self.count_between(self.week_start(then), then + timedelta(seconds=1), bored)
 
     def last_time(self):
         ts = self.times()
@@ -299,10 +370,10 @@ class EventLog:
         gaps.append((self.now() - ts[-1]).total_seconds())
         return max(gaps)
 
-    def per_day(self, days):
+    def per_day(self, days, bored=False):
         today = self.now().date()
         counts = {today - timedelta(days=i): 0 for i in range(days)}
-        for t, _ in self.times():
+        for t, _ in self.times(bored):
             if t.date() in counts:
                 counts[t.date()] += 1
         return sorted(counts.items())
@@ -315,11 +386,11 @@ class EventLog:
                 counts[t.hour] += 1
         return counts
 
-    def heat(self, days=30):
+    def heat(self, days=30, bored=False):
         """7 x 24 grid [weekday][hour] of urges over the last `days` days."""
         since = start_of_day(self.now()) - timedelta(days=days - 1)
         grid = [[0] * 24 for _ in range(7)]
-        for t, _ in self.times():
+        for t, _ in self.times(bored):
             if t >= since:
                 grid[t.weekday()][t.hour] += 1
         return grid
@@ -445,3 +516,30 @@ class EventLog:
             for c in e.get("choices", []):
                 counts[c] = counts.get(c, 0) + 1
         return counts
+
+    # -- the Bored button
+
+    def bored_choice_counts(self, days=None):
+        """[(idea key, times picked)] most picked first; "none" is a press dismissed without picking."""
+        since = self._since(days)
+        counts = {}
+        for t, e in self.times(bored=True):
+            if since and t < since:
+                continue
+            for c in e.get("choices") or ["none"]:
+                counts[c] = counts.get(c, 0) + 1
+        return sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+
+    def bored_then_urge(self, days=30, minutes=BORED_URGE_WINDOW_MINUTES):
+        """(how many Bored presses had an urge within `minutes`, how many Bored presses) over the window."""
+        since = self._since(days)
+        urges = [t for t, _ in self.times()]
+        window = timedelta(minutes=minutes)
+        hit = total = 0
+        for t, _ in self.times(bored=True):
+            if since and t < since:
+                continue
+            total += 1
+            if any(t < u <= t + window for u in urges):
+                hit += 1
+        return hit, total

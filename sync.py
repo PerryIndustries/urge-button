@@ -7,6 +7,7 @@ Merging is safe to repeat, so a sync that loses a race just runs again.
 
 events.json: {"version": 1, "events": [
     {"id", "t" (epoch ms), "kind", "minutes", "choices", "intensity_start", "intensity", "triggers", "u"}]}
+    `kind` is "lock" or "logged" for an urge and "bored" for a Bored press; they share the file and the merge.
 sudoku.json: {"version": 1, "games": [finished or abandoned games, see sudoku.py],
               "current": the puzzle in progress (the copy with the newer `u` wins) or null}
 """

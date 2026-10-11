@@ -219,6 +219,120 @@ def test_recent_locks_counts_only_locks_in_the_window(tmp_path):
     assert log.recent_locks() == 1
 
 
+def bored(log, t, *choices):
+    """Append a Bored press the way record_bored + record_choice would store it."""
+    log.events.append({"ts": t.isoformat(timespec="seconds"), "kind": "bored", "minutes": 0, "choices": list(choices),
+                       "intensity_start": None, "intensity": None, "triggers": []})
+
+
+def test_bored_presses_stay_out_of_every_urge_stat(tmp_path):
+    log = make_log(tmp_path, [NOW - timedelta(hours=1), NOW - timedelta(days=1)])
+    log.record_choice(log.events[0], "walk")
+    bored(log, NOW - timedelta(minutes=30), "sudoku")
+    bored(log, NOW - timedelta(hours=2))
+    for d in range(1, 6):                       # 9 PM five days running: would be a "hard hour" if it counted
+        bored(log, NOW.replace(hour=21) - timedelta(days=d), "walk")
+    for d in range(3):                          # last week (Mon 28 Sep .. Sun 4 Oct) has only Bored presses
+        bored(log, datetime(2026, 9, 29, 21) + timedelta(days=d))
+    assert len(log.urges()) == 2 and all(e["kind"] != "bored" for e in log.urges())
+    assert log.today() == 1 and log.this_week() == 2
+    assert log.since_last() == 3600 and log.longest_gap() == 23 * 3600
+    assert log.per_day(2) == [((NOW - timedelta(days=1)).date(), 1), (NOW.date(), 1)]
+    assert log.by_hour()[14] == 1 and sum(log.by_hour()) == 1
+    assert sum(map(sum, log.heat(30))) == 2
+    assert log.risky_hours() == set()
+    assert log.recent_locks() == 0
+    assert log.choice_counts()["sudoku"] == 0 and log.choice_counts()["walk"] == 1
+    assert log.relief_by_choice() == {} and log.trigger_counts() == []
+    assert log.calmer_days(30)["calm"] == 28
+    assert log.week_review() is None
+
+
+def test_bored_counts_picks_and_heat(tmp_path):
+    log = make_log(tmp_path, [])
+    bored(log, NOW.replace(hour=10, minute=0), "sudoku")
+    bored(log, NOW.replace(hour=13, minute=30), "sudoku")
+    bored(log, NOW.replace(hour=15, minute=0))                         # dismissed without picking
+    bored(log, NOW.replace(hour=20) - timedelta(days=1), "write")      # yesterday evening: after "by now"
+    bored(log, datetime(2026, 10, 6, 9), "Juggle")                     # Tuesday this week, your own idea
+    bored(log, datetime(2026, 9, 30, 21), "water")                     # last week
+    assert log.today(bored=True) == 3 and log.yesterday_by_now(bored=True) == 0
+    assert log.this_week(bored=True) == 5 and log.last_week_by_now(bored=True) == 1
+    assert log.per_day(2, bored=True) == [((NOW - timedelta(days=1)).date(), 1), (NOW.date(), 3)]
+    heat = log.heat(30, bored=True)
+    assert heat[NOW.weekday()][13] == 1 and sum(map(sum, heat)) == 6
+    assert log.bored_choice_counts() == [("sudoku", 2), ("Juggle", 1), ("none", 1), ("water", 1), ("write", 1)]
+    assert log.bored_choice_counts(days=1) == [("sudoku", 2), ("none", 1)]
+    assert log.today() == 0 and log.this_week() == 0                   # none of it is an urge
+
+
+def test_bored_then_urge_within_the_hour(tmp_path):
+    urges = [NOW.replace(hour=9, minute=30), NOW.replace(hour=10, minute=40), NOW.replace(hour=14, minute=30),
+             NOW - timedelta(days=40) + timedelta(minutes=10)]
+    log = make_log(tmp_path, urges)
+    bored(log, NOW.replace(hour=10, minute=0))      # urge 40 minutes later: counts
+    bored(log, NOW.replace(hour=13, minute=0))      # urge 90 minutes later: doesn't
+    bored(log, NOW.replace(hour=15, minute=0))      # nothing after it
+    bored(log, NOW - timedelta(days=40))            # outside the 30-day window
+    assert log.bored_then_urge() == (1, 3)
+    assert log.bored_then_urge(minutes=120) == (2, 3)
+    assert make_log(tmp_path, []).bored_then_urge() == (0, 0)
+
+
+def test_bored_round_trips_through_sync(tmp_path):
+    import sync
+    from urge_log import is_urge
+    log = EventLog(tmp_path / "events.json", now=lambda: NOW)
+    e = log.record_bored()
+    log.record_choice(e, "stretch")
+    assert e["kind"] == "bored" and e["minutes"] == 0 and not is_urge(e)
+    shared = log.shared()
+    assert shared[0]["kind"] == "bored" and shared[0]["choices"] == ["stretch"]
+    assert sync.from_shared(shared[0])["kind"] == "bored"
+    other = EventLog(tmp_path / "other.json", now=lambda: NOW)
+    assert other.apply_shared(sync.merge(shared, []))
+    assert other.today() == 0 and other.today(bored=True) == 1
+    assert other.bored_choice_counts() == [("stretch", 1)]
+
+
+def test_pick_ideas_gives_three_different_ones_and_shuffles():
+    from urge_log import BORED_IDEAS, pick_ideas
+    ideas = [text for _, text in BORED_IDEAS]
+    rng = random.Random(1)
+    first = pick_ideas(ideas, rng=rng)
+    assert len(first) == 3 and len(set(first)) == 3 and set(first) <= set(ideas)
+    second = pick_ideas(ideas, avoid=first, rng=rng)
+    assert len(second) == 3 and not set(second) & set(first)
+    assert len({tuple(sorted(pick_ideas(ideas, rng=random.Random(s)))) for s in range(12)}) > 1
+    assert len(pick_ideas(ideas[:4], avoid=first, rng=rng)) == 3          # too few to avoid: show any three
+    assert pick_ideas(["a", "b"]) in (["a", "b"], ["b", "a"])
+    assert sorted(pick_ideas(["a", "a", "b"])) == ["a", "b"]
+
+
+def test_bored_ideas_from_settings_and_their_keys():
+    from urge_log import BORED_IDEAS, bored_ideas, bored_key, bored_name
+    assert bored_ideas({"bored_ideas": []}) == [text for _, text in BORED_IDEAS]
+    assert bored_ideas({"bored_ideas": [" Juggle ", "", "Play Sudoku"]}) == ["Juggle", "Play Sudoku"]
+    assert bored_key("Play Sudoku") == "sudoku" and bored_key("  put music ON ") == "music"
+    assert bored_key("Juggle") == "Juggle"
+    assert bored_name("none") == "Just logged it" and bored_name("sudoku") == "Play Sudoku" and bored_name("Juggle") == "Juggle"
+
+
+def test_push_ignores_bored_presses():
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "push"))
+    from zoneinfo import ZoneInfo
+
+    import headsup_push as hp
+    tz = ZoneInfo("America/Toronto")
+    now = datetime(2026, 10, 10, 20, 40, tzinfo=tz)
+    push = {"enabled": True, "subscription": {"endpoint": "x"}, "plan": ""}
+    nine_pm = [{"t": int((now.replace(hour=21) - timedelta(days=d)).timestamp() * 1000)} for d in range(1, 6)]
+    bored_nine = [dict(e, kind="bored") for e in nine_pm]
+    assert hp.message(bored_nine, push, now) is None                            # boredom isn't a hard hour
+    just_bored = nine_pm + [{"t": int((now - timedelta(minutes=5)).timestamp() * 1000), "kind": "bored"}]
+    assert hp.message(just_bored, push, now) is not None                        # a Bored press doesn't silence it
+
+
 def test_push_message_only_before_a_hard_hour():
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "push"))
     from zoneinfo import ZoneInfo
