@@ -521,16 +521,20 @@ class FoodHere:
         w = self.win = tk.Toplevel(app.root, bg=WARN)
         w.overrideredirect(True)
         w.attributes("-topmost", True)
-        inner = tk.Frame(w, bg=PANEL, padx=px(48), pady=px(36))
-        inner.pack(padx=px(4), pady=px(4))
-        tk.Label(inner, text="Your order is here", font=(FONT, 40, "bold"), fg=TEXT, bg=PANEL).pack()
-        tk.Label(inner, text="Still on its way? Give it a few more minutes.", font=(FONT, 13), fg=MUTED,
-                 bg=PANEL).pack(pady=(px(6), px(24)))
+        inner = tk.Frame(w, bg=PANEL, padx=px(96), pady=px(64))
+        inner.pack(padx=px(6), pady=px(6))
+        tk.Label(inner, text="Your order is here", font=(FONT, 64, "bold"), fg=TEXT, bg=PANEL).pack()
+        tk.Label(inner, text="Still on its way? Give it a few more minutes.", font=(FONT, 18), fg=MUTED,
+                 bg=PANEL).pack(pady=(px(10), px(40)))
         bar = tk.Frame(inner, bg=PANEL)
         bar.pack()
         for m in food.EXTRA_MINUTES:
-            button(bar, f"+{m} min", lambda m=m: self.add(m), size=14).pack(side="left", padx=px(6))
-        button(bar, "Got it", self.done, primary=True, size=14).pack(side="left", padx=(px(24), 0))
+            b = button(bar, f"+{m} min", lambda m=m: self.add(m), size=20)
+            b.config(padx=px(28), pady=px(14))
+            b.pack(side="left", padx=px(8))
+        b = button(bar, "Got it", self.done, primary=True, size=20)
+        b.config(padx=px(36), pady=px(14))
+        b.pack(side="left", padx=(px(32), 0))
         w.update_idletasks()
         root = app.root
         mons = winapi.monitors()
