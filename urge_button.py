@@ -36,6 +36,7 @@ import tkinter as tk
 from datetime import datetime
 from pathlib import Path
 
+import food
 import placement
 import sync
 from blocker import AppBlocker, running_apps
@@ -464,6 +465,89 @@ class HeadsUp:
     def lock_now(self):
         self.close()
         self.app.trigger()
+
+    def close(self):
+        if self.win.winfo_exists():
+            self.win.destroy()
+
+
+class FoodPanel:
+    """Pressing Food while its timer runs: how long is left, add time, or cancel."""
+
+    def __init__(self, app):
+        self.app = app
+        w = self.win = tk.Toplevel(app.root, bg=WARN)
+        w.overrideredirect(True)
+        w.attributes("-topmost", True)
+        inner = tk.Frame(w, bg=PANEL, padx=px(16), pady=px(12))
+        inner.pack(padx=2, pady=2)
+        head = tk.Frame(inner, bg=PANEL)
+        head.pack(fill="x")
+        self.title = tk.Label(head, text="", font=(FONT, 12, "bold"), fg=TEXT, bg=PANEL, anchor="w")
+        self.title.pack(side="left")
+        close = tk.Label(head, text="✕", font=(FONT, 10), fg=MUTED, bg=PANEL, cursor="hand2", padx=4)
+        close.pack(side="right", anchor="n")
+        close.bind("<Button-1>", lambda e: self.close())
+        bar = tk.Frame(inner, bg=PANEL)
+        bar.pack(fill="x", pady=(10, 0))
+        for m in food.EXTRA_MINUTES:
+            button(bar, f"+{m} min", lambda m=m: self.add(m), size=10).pack(side="left", padx=(0, 6))
+        button(bar, "Cancel", self.cancel, size=10).pack(side="left", padx=(12, 0))
+        self.refresh()
+        beside_button(app, w)
+
+    def refresh(self):
+        if self.win.winfo_exists():
+            self.title.config(text=f"Food: {food.label(self.app.food_left())}")
+
+    def add(self, minutes):
+        self.app.food_extend(minutes)
+        self.close()
+
+    def cancel(self):
+        self.app.food_set(None)
+        self.close()
+
+    def close(self):
+        if self.win.winfo_exists():
+            self.win.destroy()
+
+
+class FoodHere:
+    """The Food timer ran out: a big note in the middle of the button's monitor, no sound. Add more time if it's late."""
+
+    def __init__(self, app):
+        self.app = app
+        w = self.win = tk.Toplevel(app.root, bg=WARN)
+        w.overrideredirect(True)
+        w.attributes("-topmost", True)
+        inner = tk.Frame(w, bg=PANEL, padx=px(48), pady=px(36))
+        inner.pack(padx=px(4), pady=px(4))
+        tk.Label(inner, text="Your order is here", font=(FONT, 40, "bold"), fg=TEXT, bg=PANEL).pack()
+        tk.Label(inner, text="Still on its way? Give it a few more minutes.", font=(FONT, 13), fg=MUTED,
+                 bg=PANEL).pack(pady=(px(6), px(24)))
+        bar = tk.Frame(inner, bg=PANEL)
+        bar.pack()
+        for m in food.EXTRA_MINUTES:
+            button(bar, f"+{m} min", lambda m=m: self.add(m), size=14).pack(side="left", padx=px(6))
+        button(bar, "Got it", self.done, primary=True, size=14).pack(side="left", padx=(px(24), 0))
+        w.update_idletasks()
+        root = app.root
+        mons = winapi.monitors()
+        mon = next((m for m in mons if m.contains(root.winfo_x() + root.winfo_width() // 2,
+                                                   root.winfo_y() + root.winfo_height() // 2)),
+                   placement.find(mons, None))
+        ww, wh = w.winfo_reqwidth(), w.winfo_reqheight()
+        w.geometry(placement.geometry(mon.x + (mon.w - ww) // 2, mon.y + (mon.h - wh) // 2))
+        w.lift()
+
+    def add(self, minutes):
+        self.app.food_extend(minutes)
+        self.close()
+
+    def done(self):
+        self.app.food_set(None)
+        self.close()
 
     def close(self):
         if self.win.winfo_exists():
@@ -1213,6 +1297,7 @@ class SettingsWindow:
 class App:
     W, H = 196, 78     # the URGE button
     BW, GAP = 76, 4    # the smaller Bored button beside it, and the seam between the two
+    FW = 76            # the Food timer button after Bored
     BORDER = 2         # the bright outline that makes it findable on a dark screen
     ON_TOP_SECONDS = 2  # how often it checks that nothing has covered it
 
@@ -1252,6 +1337,19 @@ class App:
         self.bored_sub = tk.Label(self.bored_face, text="", font=(FONT, 8), fg=TEXT, bg=CALM)
         self.bored_title.pack(pady=(px(14), 0))
         self.bored_sub.pack()
+        self.food_face = tk.Frame(root, bg=WARN, cursor="hand2", width=px(self.FW), height=px(self.H))
+        self.food_face.pack(side="left", fill="y", padx=(px(self.GAP), 0))
+        self.food_face.pack_propagate(False)
+        self.food_title = tk.Label(self.food_face, text="Food", font=(FONT, 11, "bold"), fg=BG, bg=WARN)
+        self.food_sub = tk.Label(self.food_face, text="", font=(FONT, 8), fg=BG, bg=WARN)
+        self.food_title.pack(pady=(px(14), 0))
+        self.food_sub.pack()
+        food_widgets = (self.food_face, self.food_title, self.food_sub)
+        for wdg in food_widgets:
+            wdg.bind("<Enter>", lambda e: [x.config(bg=mix(WARN, "#FFFFFF", 0.15)) for x in food_widgets])
+            wdg.bind("<Leave>", lambda e: [x.config(bg=WARN) for x in food_widgets])
+        self.food_panel = None
+        self.food_here = None
         bored_widgets = (self.bored_face, self.bored_title, self.bored_sub)
         for wdg in bored_widgets:
             wdg.bind("<Enter>", lambda e: [x.config(bg=mix(CALM, "#FFFFFF", 0.08)) for x in bored_widgets])
@@ -1284,6 +1382,11 @@ class App:
             wdg.bind("<ButtonPress-1>", self._press)
             wdg.bind("<B1-Motion>", self._drag)
             wdg.bind("<ButtonRelease-1>", lambda e: self._release(e, self.bored))
+            wdg.bind("<Button-3>", lambda e: menu.tk_popup(e.x_root, e.y_root))
+        for wdg in food_widgets:
+            wdg.bind("<ButtonPress-1>", self._press)
+            wdg.bind("<B1-Motion>", self._drag)
+            wdg.bind("<ButtonRelease-1>", lambda e: self._release(e, self.food_press))
             wdg.bind("<Button-3>", lambda e: menu.tk_popup(e.x_root, e.y_root))
 
         self.hotkey = winapi.Hotkey((("U", "urge"), ("B", "bored")))
@@ -1319,6 +1422,43 @@ class App:
         self._poll_hotkey()
         self._tick_counts()
         self._keep_on_top()
+        self._food_tick()
+
+    # -- the Food timer
+
+    def food_left(self):
+        return food.left(self.config.get("food_until"), time.time())
+
+    def food_set(self, until):
+        self.config["food_until"] = until
+        self.save_config()
+        self._food_tick(repeat=False)
+
+    def food_extend(self, minutes):
+        self.food_set(food.extend(self.config.get("food_until"), time.time(), minutes))
+
+    def food_press(self):
+        """Idle: start the 25 minutes. Running: how long is left, with add-time and cancel."""
+        for w in (self.food_panel, self.food_here):
+            if w and w.win.winfo_exists():
+                w.win.lift()
+                return
+        if self.food_left() is None:
+            self.food_extend(food.DEFAULT_MINUTES)
+        else:
+            self.food_panel = FoodPanel(self)
+
+    def _food_tick(self, repeat=True):
+        left = self.food_left()
+        self.food_sub.config(text=food.label(left))
+        if self.food_panel:
+            self.food_panel.refresh()
+        if left == 0 and not (self.food_here and self.food_here.win.winfo_exists()):
+            if self.food_panel:
+                self.food_panel.close()
+            self.food_here = FoodHere(self)
+        if repeat:
+            self.root.after(5000, self._food_tick)
 
     def _keep_on_top(self):
         """Windows can leave an always-on-top window under an ordinary one (seen under Discord, 2026-10-13), so
@@ -1507,7 +1647,7 @@ class App:
 
     def width(self):
         """The whole floating window: URGE, the seam, and Bored."""
-        return px(self.W + self.GAP + self.BW) + 2 * px(self.BORDER)
+        return px(self.W + self.GAP + self.BW + self.GAP + self.FW) + 2 * px(self.BORDER)
 
     def height(self):
         return px(self.H) + 2 * px(self.BORDER)
@@ -1642,6 +1782,13 @@ def run_preview(out_dir, stage):
         target = app.lock.win
     elif stage == "headsup":
         target = HeadsUp(app, 21).win
+    elif stage == "food":  # the timer running, pressed again
+        app.food_set(time.time() + 18 * 60)
+        app.food_press()
+        target = app.food_panel.win
+    elif stage == "foodhere":
+        app.food_set(time.time() - 1)
+        target = app.food_here.win
     elif stage.startswith("bored"):
         # bored = the ideas; boredwrite / boredstretch / boredtimer (outside) / boredtidy / boredread / boredpractice /
         # boredfriend / boredwater / boredcustom = that activity running; borednotes = your notes; borednoticed and
