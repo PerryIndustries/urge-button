@@ -33,6 +33,12 @@ def test_on_screen_rejects_a_spot_on_an_unplugged_monitor():
     assert not placement.on_screen([MAIN], -1000, 500, 100, 50)
 
 
+def test_clamp_slides_an_overhanging_window_back_onto_its_monitor():
+    assert placement.clamp([MAIN, LEFT], 2500, 1400, 100, 50) == (2460, 1390)
+    assert placement.clamp([MAIN, LEFT], -1930, 190, 100, 50) == (-1920, 200)
+    assert placement.clamp([MAIN, LEFT], 500, 300, 100, 50) == (500, 300)
+
+
 def test_centre_in_is_relative_to_the_cover_window():
     # cover starts at the far-left monitor, so the main monitor's centre is offset by its width
     assert placement.centre_in(MAIN, -1920, 0) == (1920 + 1280, 720)

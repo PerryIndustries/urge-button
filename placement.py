@@ -65,6 +65,15 @@ def on_screen(monitors, x, y, w, h):
     return any(m.contains(cx, cy) for m in monitors)
 
 
+def clamp(monitors, x, y, w, h):
+    """Slide a w x h window fully onto the monitor its centre is on, so no edge of it hangs off-screen."""
+    cx, cy = x + w // 2, y + h // 2
+    for m in monitors:
+        if m.contains(cx, cy):
+            return max(m.x, min(x, m.x + m.w - w)), max(m.y, min(y, m.y + m.h - h))
+    return x, y
+
+
 def centre_in(monitor, origin_x, origin_y):
     """Centre of the monitor, relative to a window whose top-left is (origin_x, origin_y)."""
     return monitor.x - origin_x + monitor.w // 2, monitor.y - origin_y + monitor.h // 2

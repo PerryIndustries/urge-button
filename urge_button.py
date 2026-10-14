@@ -45,7 +45,7 @@ import winapi
 from progress import ProgressWindow, fake_log
 from sudoku import SudokuLog
 from sudoku_ui import SudokuView, SudokuWindow, fake_sudoku_log
-from theme import ACCENT, BAD, BG, CALM, FONT, GOOD, MUTED, PANEL, PANEL_HI, TEXT, WARN, button, mix, px
+from theme import ACCENT, ACCENT_BRIGHT, BAD, BG, CALM, FONT, GOOD, MUTED, PANEL, PANEL_HI, TEXT, WARN, button, mix, px
 from urge_log import (
     BORED_IDEAS, CONFIG_PATH, MAX_LOCK_MINUTES, OPTIONS, STOP_LINES, STRETCHES, SURFACES, TRIGGERS, Countdown,
     EventLog, activity_seconds, bored_ideas, bored_key, bored_name, clamp_minutes, clock_text, cluster_minutes,
@@ -1211,8 +1211,10 @@ class SettingsWindow:
 
 
 class App:
-    W, H = 176, 70     # the URGE button
-    BW, GAP = 72, 4    # the smaller Bored button beside it, and the seam between the two
+    W, H = 196, 78     # the URGE button
+    BW, GAP = 76, 4    # the smaller Bored button beside it, and the seam between the two
+    BORDER = 2         # the bright outline that makes it findable on a dark screen
+    ON_TOP_SECONDS = 2  # how often it checks that nothing has covered it
 
     def __init__(self, log=None, sudoku_log=None, hotkey=True):
         self.config = load_config()
@@ -1230,7 +1232,8 @@ class App:
         root.title("Urge Button")
         root.overrideredirect(True)
         root.attributes("-topmost", True)
-        root.configure(bg=BG)
+        root.configure(bg=BG, highlightthickness=px(self.BORDER), highlightbackground=ACCENT_BRIGHT,
+                       highlightcolor=ACCENT_BRIGHT)
 
         self.place_button()
 
@@ -1238,7 +1241,7 @@ class App:
         self.face = tk.Frame(root, bg=ACCENT, cursor="hand2", width=px(self.W), height=px(self.H))
         self.face.pack(side="left", fill="y")
         self.face.pack_propagate(False)
-        self.title = tk.Label(self.face, text="URGE", font=(FONT, 16, "bold"), fg=TEXT, bg=ACCENT)
+        self.title = tk.Label(self.face, text="URGE", font=(FONT, 18, "bold"), fg=TEXT, bg=ACCENT)
         self.sub = tk.Label(self.face, text="", font=(FONT, 9), fg=TEXT, bg=ACCENT)
         self.title.pack(pady=(px(8), 0))
         self.sub.pack()
@@ -1315,6 +1318,18 @@ class App:
 
         self._poll_hotkey()
         self._tick_counts()
+        self._keep_on_top()
+
+    def _keep_on_top(self):
+        """Windows can leave an always-on-top window under an ordinary one (seen under Discord, 2026-10-13), so
+        when another app's window is over the middle of the button, raise it again. A lock covers it on purpose."""
+        if self.lock is None:
+            x, y = self.root.winfo_x() + self.width() // 2, self.root.winfo_y() + self.height() // 2
+            if self.root.winfo_containing(x, y) is None:
+                self.root.attributes("-topmost", False)
+                self.root.attributes("-topmost", True)
+                self.root.lift()
+        self.root.after(self.ON_TOP_SECONDS * 1000, self._keep_on_top)
 
     # -- blocking
 
@@ -1492,17 +1507,20 @@ class App:
 
     def width(self):
         """The whole floating window: URGE, the seam, and Bored."""
-        return px(self.W + self.GAP + self.BW)
+        return px(self.W + self.GAP + self.BW) + 2 * px(self.BORDER)
+
+    def height(self):
+        return px(self.H) + 2 * px(self.BORDER)
 
     def place_button(self):
         """Put the button where the config says, falling back to the main monitor if that spot is gone."""
-        w, h = self.width(), px(self.H)
+        w, h = self.width(), self.height()
         mons = winapi.monitors()
         cfg = self.config
         x, y = cfg.get("button_x"), cfg.get("button_y")
         anchor = cfg.get("button_anchor") or "bottom-right"
         if anchor == "custom" and x is not None and y is not None and placement.on_screen(mons, x, y, w, h):
-            pass
+            x, y = placement.clamp(mons, x, y, w, h)
         else:
             if anchor == "custom":
                 anchor = "bottom-right"
@@ -1539,7 +1557,7 @@ class App:
             x, y = self.root.winfo_x(), self.root.winfo_y()
             cfg = self.config
             cfg["button_x"], cfg["button_y"], cfg["button_anchor"] = x, y, "custom"
-            here = [m for m in winapi.monitors() if m.contains(x + self.width() // 2, y + px(self.H) // 2)]
+            here = [m for m in winapi.monitors() if m.contains(x + self.width() // 2, y + self.height() // 2)]
             if here:
                 cfg["button_monitor"] = here[0].name
             self.save_config()
