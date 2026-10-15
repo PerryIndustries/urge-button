@@ -26,3 +26,18 @@ def test_label_rounds_up_to_the_minute():
     assert food.label(61) == "2m left"
     assert food.label(30) == "1m left"
     assert food.label(0) == "here!"
+
+
+def test_label_shows_hours_for_long_timers():
+    assert food.label(60 * 60) == "1h left"
+    assert food.label(85 * 60) == "1h 25m left"
+
+
+def test_taking_time_off_stops_at_one_minute():
+    assert food.extend(1600, 1000, -5) == 1300
+    assert food.extend(1100, 1000, -5) == 1060
+
+
+def test_amount_names_hours():
+    assert food.amount(5) == "+5 min"
+    assert food.amount(60) == "+1 hr"

@@ -491,7 +491,7 @@ class FoodPanel:
         bar = tk.Frame(inner, bg=PANEL)
         bar.pack(fill="x", pady=(10, 0))
         for m in food.EXTRA_MINUTES:
-            button(bar, f"+{m} min", lambda m=m: self.add(m), size=10).pack(side="left", padx=(0, 6))
+            button(bar, food.amount(m), lambda m=m: self.add(m), size=10).pack(side="left", padx=(0, 6))
         button(bar, "Cancel", self.cancel, size=10).pack(side="left", padx=(12, 0))
         self.refresh()
         beside_button(app, w)
@@ -501,8 +501,7 @@ class FoodPanel:
             self.title.config(text=f"Food: {food.label(self.app.food_left())}")
 
     def add(self, minutes):
-        self.app.food_extend(minutes)
-        self.close()
+        self.app.food_extend(minutes)  # stays open so a few presses stack up
 
     def cancel(self):
         self.app.food_set(None)
@@ -529,7 +528,7 @@ class FoodHere:
         bar = tk.Frame(inner, bg=PANEL)
         bar.pack()
         for m in food.EXTRA_MINUTES:
-            b = button(bar, f"+{m} min", lambda m=m: self.add(m), size=20)
+            b = button(bar, food.amount(m), lambda m=m: self.add(m), size=20)
             b.config(padx=px(28), pady=px(14))
             b.pack(side="left", padx=px(8))
         b = button(bar, "Got it", self.done, primary=True, size=20)
@@ -1391,6 +1390,7 @@ class App:
             wdg.bind("<ButtonPress-1>", self._press)
             wdg.bind("<B1-Motion>", self._drag)
             wdg.bind("<ButtonRelease-1>", lambda e: self._release(e, self.food_press))
+            wdg.bind("<MouseWheel>", self.food_scroll)
             wdg.bind("<Button-3>", lambda e: menu.tk_popup(e.x_root, e.y_root))
 
         self.hotkey = winapi.Hotkey((("U", "urge"), ("B", "bored")))
@@ -1451,6 +1451,14 @@ class App:
             self.food_extend(food.DEFAULT_MINUTES)
         else:
             self.food_panel = FoodPanel(self)
+
+    def food_scroll(self, event):
+        """Wheel up over a running Food timer adds a few minutes; wheel down takes them off (never below 1 minute)."""
+        left = self.food_left()
+        if not left:
+            return
+        minutes = food.SCROLL_MINUTES if event.delta > 0 else -food.SCROLL_MINUTES
+        self.food_set(food.extend(self.config.get("food_until"), time.time(), minutes))
 
     def _food_tick(self, repeat=True):
         left = self.food_left()

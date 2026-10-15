@@ -4,7 +4,8 @@ The end time is a wall-clock timestamp in the settings, so a restart (an update,
 """
 
 DEFAULT_MINUTES = 25
-EXTRA_MINUTES = (5, 10, 15)
+EXTRA_MINUTES = (5, 15, 30, 60)
+SCROLL_MINUTES = 5  # one wheel notch over the Food button
 
 
 def left(until, now):
@@ -15,8 +16,18 @@ def left(until, now):
 
 
 def extend(until, now, minutes):
-    """Add minutes to a running timer, or start them from now when it has already run out (or never ran)."""
-    return max(until or now, now) + minutes * 60
+    """Add minutes to a running timer, or start them from now when it has already run out (or never ran).
+
+    Negative minutes take time off, but never past 1 minute left.
+    """
+    return max(max(until or now, now) + minutes * 60, now + 60)
+
+
+def amount(minutes):
+    """An add-time button: '+5 min', '+1 hr'."""
+    if minutes % 60 == 0:
+        return f"+{minutes // 60} hr"
+    return f"+{minutes} min"
 
 
 def label(seconds):
@@ -25,4 +36,7 @@ def label(seconds):
         return f"{DEFAULT_MINUTES}m"
     if seconds <= 0:
         return "here!"
-    return f"{max(1, (seconds + 59) // 60)}m left"
+    minutes = max(1, (seconds + 59) // 60)
+    if minutes >= 60:
+        return f"{minutes // 60}h {minutes % 60}m left" if minutes % 60 else f"{minutes // 60}h left"
+    return f"{minutes}m left"
