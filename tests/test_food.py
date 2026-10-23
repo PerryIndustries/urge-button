@@ -18,11 +18,11 @@ def test_extend_adds_to_a_running_timer():
 
 def test_extend_starts_from_now_once_it_has_run_out():
     assert food.extend(900, 1000, 10) == 1600
-    assert food.extend(None, 1000, food.DEFAULT_MINUTES) == 1000 + 25 * 60
+    assert food.extend(None, 1000, food.DEFAULT_MINUTES) == 1000 + 5 * 60
 
 
 def test_label_rounds_up_to_the_minute():
-    assert food.label(None) == "25m"
+    assert food.label(None) == "5m"
     assert food.label(61) == "2m left"
     assert food.label(30) == "1m left"
     assert food.label(0) == "here!"

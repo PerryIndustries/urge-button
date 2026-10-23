@@ -16,7 +16,7 @@ python urge_button.py --install
 
 `--install` puts an "Urge Button" shortcut on the desktop, sets it to start with Windows, and starts it now. Right-click the floating button for Progress, Sudoku, "I'm bored", Settings and Quit; Ctrl+Alt+U triggers the lock from anywhere and Ctrl+Alt+B opens the Bored ideas.
 
-**Food timer:** the orange Food button starts a 25-minute timer (it survives a restart). Press it again to see what is left, add 5/10/15 minutes or cancel. When it runs out a big silent "Your order is here" note fills the middle of the button's monitor, with +5/+10/+15 min if the order is late and Got it to clear it.
+**Food timer:** the orange Food button starts a 5-minute timer (it survives a restart). Press it again to see what is left, add 5/15/30 minutes or 1 hour, or cancel; the mouse wheel over Food adds or takes off 5 minutes. When it runs out a big silent "Your order is here" note fills the middle of the button's monitor, with +5/+10/+15 min if the order is late and Got it to clear it.
 
 **Updates:** the app keeps itself up to date from this repo (on start and every 30 minutes, like Rift Pen). New versions download in the background and install themselves the first time nothing is open (no lock, no Sudoku, Settings or Progress window) and the keyboard and mouse have been quiet for two minutes - or right away from "Restart to update" in the right-click menu, or at the next start. It only updates a clean checkout of `main`, so local edits are never overwritten.
 

@@ -3,7 +3,7 @@
 The end time is a wall-clock timestamp in the settings, so a restart (an update, a reboot) picks it back up.
 """
 
-DEFAULT_MINUTES = 25
+DEFAULT_MINUTES = 5
 EXTRA_MINUTES = (5, 15, 30, 60)
 SCROLL_MINUTES = 5  # one wheel notch over the Food button
 
