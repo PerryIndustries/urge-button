@@ -36,6 +36,7 @@ import tkinter as tk
 from datetime import datetime
 from pathlib import Path
 
+import alarm
 import food
 import placement
 import sync
@@ -46,7 +47,7 @@ import winapi
 from progress import ProgressWindow, fake_log
 from sudoku import SudokuLog
 from sudoku_ui import SudokuView, SudokuWindow, fake_sudoku_log
-from theme import ACCENT, ACCENT_BRIGHT, BAD, BG, CALM, FONT, GOOD, MUTED, PANEL, PANEL_HI, TEXT, WARN, button, mix, px
+from theme import ACCENT, ACCENT_BRIGHT, ACCENT_SOFT, BAD, BG, CALM, FONT, GOOD, MUTED, PANEL, PANEL_HI, TEXT, WARN, button, mix, px
 from urge_log import (
     BORED_IDEAS, CONFIG_PATH, MAX_LOCK_MINUTES, OPTIONS, STOP_LINES, STRETCHES, SURFACES, TRIGGERS, Countdown,
     EventLog, activity_seconds, bored_ideas, bored_key, bored_name, clamp_minutes, clock_text, cluster_minutes,
@@ -1301,6 +1302,7 @@ class App:
     W, H = 196, 78     # the URGE button
     BW, GAP = 76, 4    # the smaller Bored button beside it, and the seam between the two
     FW = 76            # the Food timer button after Bored
+    AW = 76            # the Alarm button after Food (only when ~/Alarm is installed)
     BORDER = 2         # the bright outline that makes it findable on a dark screen
     ON_TOP_SECONDS = 2  # how often it checks that nothing has covered it
 
@@ -1323,6 +1325,7 @@ class App:
         root.configure(bg=BG, highlightthickness=px(self.BORDER), highlightbackground=ACCENT_BRIGHT,
                        highlightcolor=ACCENT_BRIGHT)
 
+        self.has_alarm = alarm.installed()
         self.place_button()
 
         # One window, two buttons: URGE on the left, Bored on the right. They move and dock together.
@@ -1353,6 +1356,19 @@ class App:
             wdg.bind("<Leave>", lambda e: [x.config(bg=WARN) for x in food_widgets])
         self.food_panel = None
         self.food_here = None
+        alarm_widgets = ()
+        if self.has_alarm:
+            self.alarm_face = tk.Frame(root, bg=ACCENT_SOFT, cursor="hand2", width=px(self.AW), height=px(self.H))
+            self.alarm_face.pack(side="left", fill="y", padx=(px(self.GAP), 0))
+            self.alarm_face.pack_propagate(False)
+            self.alarm_title = tk.Label(self.alarm_face, text="Alarm", font=(FONT, 11, "bold"), fg=TEXT, bg=ACCENT_SOFT)
+            self.alarm_sub = tk.Label(self.alarm_face, text="", font=(FONT, 8), fg=TEXT, bg=ACCENT_SOFT)
+            self.alarm_title.pack(pady=(px(14), 0))
+            self.alarm_sub.pack()
+            alarm_widgets = (self.alarm_face, self.alarm_title, self.alarm_sub)
+            for wdg in alarm_widgets:
+                wdg.bind("<Enter>", lambda e: [x.config(bg=mix(ACCENT_SOFT, "#FFFFFF", 0.12)) for x in alarm_widgets])
+                wdg.bind("<Leave>", lambda e: [x.config(bg=ACCENT_SOFT) for x in alarm_widgets])
         bored_widgets = (self.bored_face, self.bored_title, self.bored_sub)
         for wdg in bored_widgets:
             wdg.bind("<Enter>", lambda e: [x.config(bg=mix(CALM, "#FFFFFF", 0.08)) for x in bored_widgets])
@@ -1392,6 +1408,11 @@ class App:
             wdg.bind("<ButtonRelease-1>", lambda e: self._release(e, self.food_press))
             wdg.bind("<MouseWheel>", self.food_scroll)
             wdg.bind("<Button-3>", lambda e: menu.tk_popup(e.x_root, e.y_root))
+        for wdg in alarm_widgets:
+            wdg.bind("<ButtonPress-1>", self._press)
+            wdg.bind("<B1-Motion>", self._drag)
+            wdg.bind("<ButtonRelease-1>", lambda e: self._release(e, self.alarm_press))
+            wdg.bind("<Button-3>", lambda e: menu.tk_popup(e.x_root, e.y_root))
 
         self.hotkey = winapi.Hotkey((("U", "urge"), ("B", "bored")))
         registered = self.hotkey.start() if hotkey else {}
@@ -1427,6 +1448,31 @@ class App:
         self._tick_counts()
         self._keep_on_top()
         self._food_tick()
+        self._alarm_results = queue.Queue()
+        if self.has_alarm:
+            self._alarm_tick(read=hotkey)  # previews don't run the alarm's PowerShell
+
+    # -- the Alarm button
+
+    def alarm_press(self):
+        alarm.open_panel(str(Path(sys.executable).with_name("pythonw.exe")))
+        self.root.after(30_000, lambda: self._alarm_tick(repeat=False))  # pick up a change made in the panel
+
+    def _alarm_tick(self, repeat=True, read=True):
+        """Read when the alarm next rings off the UI thread, every few minutes."""
+        if read:
+            threading.Thread(target=lambda: self._alarm_results.put(alarm.status()), daemon=True).start()
+            self._alarm_show()
+        if repeat:
+            self.root.after(alarm.REFRESH_SECONDS * 1000, self._alarm_tick)
+
+    def _alarm_show(self, tries=120):
+        if self._alarm_results.empty():
+            if tries:
+                self.root.after(500, lambda: self._alarm_show(tries - 1))
+            return
+        s = self._alarm_results.get()
+        self.alarm_sub.config(text=alarm.label(s.get("next"), datetime.now()) if s else "?")
 
     # -- the Food timer
 
@@ -1658,8 +1704,9 @@ class App:
             self.sudoku_win = SudokuWindow(self)
 
     def width(self):
-        """The whole floating window: URGE, the seam, and Bored."""
-        return px(self.W + self.GAP + self.BW + self.GAP + self.FW) + 2 * px(self.BORDER)
+        """The whole floating window: URGE, Bored, Food and (when installed) Alarm, with a seam between each."""
+        alarm_w = self.GAP + self.AW if self.has_alarm else 0
+        return px(self.W + self.GAP + self.BW + self.GAP + self.FW + alarm_w) + 2 * px(self.BORDER)
 
     def height(self):
         return px(self.H) + 2 * px(self.BORDER)
@@ -1784,6 +1831,8 @@ def run_preview(out_dir, stage):
     elif stage == "settings":
         target = SettingsWindow(app).win
     elif stage == "button":
+        if app.has_alarm:
+            app.alarm_sub.config(text="Sat 11am")
         target = app.root
     elif stage == "cluster":
         app.lock = None
