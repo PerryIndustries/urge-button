@@ -1,0 +1,89 @@
+"""The floating window itself: a real Tk App against settings and history in tmp_path, never %APPDATA%."""
+
+import sys
+import tkinter as tk
+from pathlib import Path
+
+import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+import urge_button  # noqa: E402
+from sudoku import SudokuLog  # noqa: E402
+from theme import px  # noqa: E402
+from urge_log import EventLog, load_config, load_json  # noqa: E402
+
+
+class E:
+    """A pointer event with only what the click-vs-drag handlers read."""
+
+    def __init__(self, x, y):
+        self.x_root, self.y_root = x, y
+
+
+def labels(menu):
+    return [menu.entrycget(i, "label") for i in range(menu.index("end") + 1) if menu.type(i) != "separator"]
+
+
+@pytest.fixture
+def cfg_path(tmp_path, monkeypatch):
+    path = tmp_path / "config.json"
+    monkeypatch.setattr(urge_button, "CONFIG_PATH", path)
+    monkeypatch.setattr(urge_button, "load_config", lambda: load_config(path))
+    return path
+
+
+@pytest.fixture
+def make_app(tmp_path, cfg_path):
+    """A fresh App on the tmp settings (no hotkeys, no sync, no git), kept off the screen. Closed after the test."""
+    apps = []
+
+    def make():
+        app = urge_button.App(log=EventLog(tmp_path / "events.json"), sudoku_log=SudokuLog(tmp_path / "sudoku.json"),
+                              hotkey=False)
+        app.root.withdraw()
+        apps.append(app)
+        return app
+
+    yield make
+    for app in apps:
+        try:
+            app.root.destroy()
+        except tk.TclError:
+            pass  # the test closed it itself
+
+
+def test_minimize_is_a_dot_and_survives_a_restart(make_app, cfg_path):
+    app = make_app()
+    assert not app.minimized
+    assert app.strip.winfo_manager() == "pack" and app.dot.winfo_manager() == ""
+    full = app.width()
+    app.minimize()
+    assert app.minimized and load_json(cfg_path, {})["minimized"] is True
+    assert app.dot.winfo_manager() == "pack" and app.strip.winfo_manager() == ""
+    assert app.width() == app.height() == px(urge_button.App.DOT) < full
+    assert "Restore" in labels(app.menu) and "Minimize" not in labels(app.menu)
+    app.root.destroy()
+
+    again = make_app()                       # a restart starts minimized
+    assert again.minimized and again.dot.winfo_manager() == "pack" and again.strip.winfo_manager() == ""
+    again.restore()
+    assert not again.minimized and load_json(cfg_path, {})["minimized"] is False
+    assert again.strip.winfo_manager() == "pack" and again.dot.winfo_manager() == ""
+    assert again.width() == full
+    assert "Minimize" in labels(again.menu) and "Restore" not in labels(again.menu)
+
+
+def test_dot_click_restores_but_a_drag_only_moves_it(make_app, cfg_path):
+    app = make_app()
+    app.minimize()
+    app._press(E(100, 100))
+    app._drag(E(140, 130))
+    app._release(E(140, 130), app.restore)
+    cfg = load_json(cfg_path, {})
+    assert app.minimized                                   # a drag is not a click
+    assert (cfg["dot_x"], cfg["dot_y"]) == (app.root.winfo_x(), app.root.winfo_y())
+    assert cfg["button_x"] is None and cfg["button_anchor"] == "bottom-right"   # the cluster's own spot is untouched
+    app._press(E(100, 100))
+    app._release(E(101, 100), app.restore)
+    assert not app.minimized

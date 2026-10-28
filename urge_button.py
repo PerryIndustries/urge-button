@@ -11,8 +11,9 @@ it off. Just before an hour that's usually hard, a heads-up appears by the butto
 Beside it sits a smaller Bored button (or Ctrl+Alt+B): no lock, just three quick
 things to do for five minutes, and the press is tracked on its own, apart from urges.
 
-Right-click either button for Progress, Sudoku, logging an urge you handled without
-the lock, Settings and Quit. Data lives in %APPDATA%\\UrgeButton.
+Right-click any button for Progress, Sudoku, logging an urge you handled without
+the lock, Minimize (the whole strip becomes one small dot; click it to bring the
+strip back), Settings and Quit. Data lives in %APPDATA%\\UrgeButton.
 
 Ctrl+Alt+Del is handled by Windows itself and cannot be blocked - that is the
 deliberate hard exit. The lock always ends on its own when the timer runs out.
@@ -1347,6 +1348,8 @@ class App:
     AW = 76            # the Alarm button after Food (only when ~/Alarm is installed)
     NW = 76            # the Notes button last (only when the voicenotes pipeline is installed)
     BORDER = 2         # the bright outline that makes it findable on a dark screen
+    DOT = 18           # the whole window when minimized: one round dot
+    CLEAR = "#010203"  # the dot window's see-through colour (Windows -transparentcolor), so only the dot shows
     ON_TOP_SECONDS = 2  # how often it checks that nothing has covered it
 
     def __init__(self, log=None, sudoku_log=None, hotkey=True):
@@ -1370,24 +1373,27 @@ class App:
 
         self.has_alarm = alarm.installed()
         self.has_notes = notes.installed()
+        self.minimized = bool(self.config.get("minimized"))
         self.place_button()
 
-        # One window, two buttons: URGE on the left, Bored on the right. They move and dock together.
-        self.face = tk.Frame(root, bg=ACCENT, cursor="hand2", width=px(self.W), height=px(self.H))
+        # One window, a strip of buttons: URGE on the left, then Bored, Food, Alarm and Notes. They move and dock
+        # together, and Minimize swaps the whole strip for one small dot.
+        strip = self.strip = tk.Frame(root, bg=BG)
+        self.face = tk.Frame(strip, bg=ACCENT, cursor="hand2", width=px(self.W), height=px(self.H))
         self.face.pack(side="left", fill="y")
         self.face.pack_propagate(False)
         self.title = tk.Label(self.face, text="URGE", font=(FONT, 18, "bold"), fg=TEXT, bg=ACCENT)
         self.sub = tk.Label(self.face, text="", font=(FONT, 9), fg=TEXT, bg=ACCENT)
         self.title.pack(pady=(px(8), 0))
         self.sub.pack()
-        self.bored_face = tk.Frame(root, bg=CALM, cursor="hand2", width=px(self.BW), height=px(self.H))
+        self.bored_face = tk.Frame(strip, bg=CALM, cursor="hand2", width=px(self.BW), height=px(self.H))
         self.bored_face.pack(side="left", fill="y", padx=(px(self.GAP), 0))
         self.bored_face.pack_propagate(False)
         self.bored_title = tk.Label(self.bored_face, text="Bored", font=(FONT, 11, "bold"), fg=TEXT, bg=CALM)
         self.bored_sub = tk.Label(self.bored_face, text="", font=(FONT, 8), fg=TEXT, bg=CALM)
         self.bored_title.pack(pady=(px(14), 0))
         self.bored_sub.pack()
-        self.food_face = tk.Frame(root, bg=WARN, cursor="hand2", width=px(self.FW), height=px(self.H))
+        self.food_face = tk.Frame(strip, bg=WARN, cursor="hand2", width=px(self.FW), height=px(self.H))
         self.food_face.pack(side="left", fill="y", padx=(px(self.GAP), 0))
         self.food_face.pack_propagate(False)
         self.food_title = tk.Label(self.food_face, text="Food", font=(FONT, 11, "bold"), fg=BG, bg=WARN)
@@ -1402,7 +1408,7 @@ class App:
         self.food_here = None
         alarm_widgets = ()
         if self.has_alarm:
-            self.alarm_face = tk.Frame(root, bg=ACCENT_SOFT, cursor="hand2", width=px(self.AW), height=px(self.H))
+            self.alarm_face = tk.Frame(strip, bg=ACCENT_SOFT, cursor="hand2", width=px(self.AW), height=px(self.H))
             self.alarm_face.pack(side="left", fill="y", padx=(px(self.GAP), 0))
             self.alarm_face.pack_propagate(False)
             self.alarm_title = tk.Label(self.alarm_face, text="Alarm", font=(FONT, 11, "bold"), fg=TEXT, bg=ACCENT_SOFT)
@@ -1415,7 +1421,7 @@ class App:
                 wdg.bind("<Leave>", lambda e: [x.config(bg=ACCENT_SOFT) for x in alarm_widgets])
         notes_widgets = ()
         if self.has_notes:
-            self.notes_face = tk.Frame(root, bg=GOOD, cursor="hand2", width=px(self.NW), height=px(self.H))
+            self.notes_face = tk.Frame(strip, bg=GOOD, cursor="hand2", width=px(self.NW), height=px(self.H))
             self.notes_face.pack(side="left", fill="y", padx=(px(self.GAP), 0))
             self.notes_face.pack_propagate(False)
             self.notes_title = tk.Label(self.notes_face, text="Notes", font=(FONT, 11, "bold"), fg=BG, bg=GOOD)
@@ -1449,8 +1455,19 @@ class App:
         menu.add_command(label="Log an urge I handled on my own", command=lambda: LogOwnWindow(self))
         menu.add_command(label="I'm bored", command=self.bored)
         menu.add_separator()
+        menu.add_command(label="Minimize", command=self.minimize)
         menu.add_command(label="Settings", command=self.open_settings)
         menu.add_command(label="Quit", command=root.destroy)
+
+        # Minimized: the strip goes away and one round dot stays, same menu, click to bring the strip back.
+        d = px(self.DOT)
+        self.dot = tk.Canvas(root, width=d, height=d, bg=self.CLEAR, highlightthickness=0, cursor="hand2")
+        self.dot.create_oval(1, 1, d - 2, d - 2, fill=ACCENT, outline=ACCENT_BRIGHT, width=1)
+        self.dot.bind("<ButtonPress-1>", self._press)
+        self.dot.bind("<B1-Motion>", self._drag)
+        self.dot.bind("<ButtonRelease-1>", lambda e: self._release(e, self.restore))
+        self.dot.bind("<Button-3>", lambda e: menu.tk_popup(e.x_root, e.y_root))
+        self.set_minimized(self.minimized)
 
         for wdg in (self.face, self.title, self.sub):
             wdg.bind("<ButtonPress-1>", self._press)
@@ -1791,28 +1808,49 @@ class App:
             self.sudoku_win = SudokuWindow(self)
 
     def width(self):
-        """The whole floating window: URGE, Bored, Food and (when installed) Alarm and Notes, with a seam between each."""
-        alarm_w = self.GAP + self.AW if self.has_alarm else 0
-        notes_w = self.GAP + self.NW if self.has_notes else 0
-        return px(self.W + self.GAP + self.BW + self.GAP + self.FW + alarm_w + notes_w) + 2 * px(self.BORDER)
+        """The whole floating window: the strip (URGE, Bored, Food and, when installed, Alarm and Notes, with a seam
+        between each), or just the dot when minimized."""
+        return px(self.DOT) if self.minimized else self.strip_size()[0]
 
     def height(self):
-        return px(self.H) + 2 * px(self.BORDER)
+        return px(self.DOT) if self.minimized else self.strip_size()[1]
 
-    def place_button(self):
-        """Put the button where the config says, falling back to the main monitor if that spot is gone."""
-        w, h = self.width(), self.height()
-        mons = winapi.monitors()
+    def strip_size(self):
+        alarm_w = self.GAP + self.AW if self.has_alarm else 0
+        notes_w = self.GAP + self.NW if self.has_notes else 0
+        w = px(self.W + self.GAP + self.BW + self.GAP + self.FW + alarm_w + notes_w) + 2 * px(self.BORDER)
+        return w, px(self.H) + 2 * px(self.BORDER)
+
+    def strip_spot(self, mons, w, h):
+        """Top-left of a w x h window where the strip goes: its dragged spot if that is still on a screen, else its
+        anchor corner on its monitor."""
         cfg = self.config
         x, y = cfg.get("button_x"), cfg.get("button_y")
         anchor = cfg.get("button_anchor") or "bottom-right"
         if anchor == "custom" and x is not None and y is not None and placement.on_screen(mons, x, y, w, h):
-            x, y = placement.clamp(mons, x, y, w, h)
-        else:
-            if anchor == "custom":
-                anchor = "bottom-right"
-            mon = placement.find(mons, cfg.get("button_monitor"))
-            x, y = placement.anchor_position(mon, w, h, anchor, margin=px(24))
+            return placement.clamp(mons, x, y, w, h)
+        mon = placement.find(mons, cfg.get("button_monitor"))
+        return placement.anchor_position(mon, w, h, "bottom-right" if anchor == "custom" else anchor, margin=px(24))
+
+    def dot_spot(self, mons, w, h):
+        """Where the dot goes: where it was last dragged to, else the corner of the strip's own spot nearest the edge
+        of its monitor (an anchored strip puts the dot at that anchor), so it stays where you look for the button."""
+        cfg = self.config
+        x, y = cfg.get("dot_x"), cfg.get("dot_y")
+        if x is not None and y is not None and placement.on_screen(mons, x, y, w, h):
+            return placement.clamp(mons, x, y, w, h)
+        sw, sh = self.strip_size()
+        sx, sy = self.strip_spot(mons, sw, sh)
+        mon = next((m for m in mons if m.contains(sx + sw // 2, sy + sh // 2)), placement.find(mons, None))
+        x = sx + sw - w if sx + sw // 2 > mon.x + mon.w // 2 else sx
+        y = sy + sh - h if sy + sh // 2 > mon.y + mon.h // 2 else sy
+        return x, y
+
+    def place_button(self):
+        """Put the window where the config says, falling back to the main monitor if that spot is gone."""
+        w, h = self.width(), self.height()
+        mons = winapi.monitors()
+        x, y = (self.dot_spot if self.minimized else self.strip_spot)(mons, w, h)
         self.root.geometry(placement.geometry(x, y, w, h))
 
     def move_button(self, monitor_name=None, anchor=None):
@@ -1822,7 +1860,44 @@ class App:
             self.config["button_anchor"] = anchor
         elif self.config.get("button_anchor") == "custom":
             self.config["button_anchor"] = "bottom-right"  # a new monitor needs a spot on it
+        self.config["dot_x"] = self.config["dot_y"] = None  # the dot follows the strip to its new place
         self.place_button()
+        self.save_config()
+
+    # -- minimize to a dot
+
+    def set_minimized(self, on):
+        """Show the dot instead of the strip (or the strip again). The window shrinks to the dot and, while
+        minimized, everything but the dot itself is see-through, so it is really just a dot on the desktop."""
+        self.minimized = on
+        if on:
+            self.strip.pack_forget()
+            self.root.configure(highlightthickness=0, bg=self.CLEAR)
+            self.root.attributes("-transparentcolor", self.CLEAR)
+            self.dot.pack()
+        else:
+            self.dot.pack_forget()
+            self.root.attributes("-transparentcolor", "")
+            self.root.configure(highlightthickness=px(self.BORDER), bg=BG)
+            self.strip.pack(fill="both", expand=True)
+        self.place_button()
+        for label in ("Minimize", "Restore"):  # whichever the menu says now
+            try:
+                i = self.menu.index(label)
+            except tk.TclError:
+                continue
+            self.menu.entryconfigure(i, label="Restore" if on else "Minimize",
+                                     command=self.restore if on else self.minimize)
+            break
+
+    def minimize(self):
+        self.set_minimized(True)
+        self.config["minimized"] = True
+        self.save_config()
+
+    def restore(self):
+        self.set_minimized(False)
+        self.config["minimized"] = False
         self.save_config()
 
     # click vs drag: a press that moves more than a few pixels is a drag.
@@ -1843,10 +1918,13 @@ class App:
         if self._moved:
             x, y = self.root.winfo_x(), self.root.winfo_y()
             cfg = self.config
-            cfg["button_x"], cfg["button_y"], cfg["button_anchor"] = x, y, "custom"
-            here = [m for m in winapi.monitors() if m.contains(x + self.width() // 2, y + self.height() // 2)]
-            if here:
-                cfg["button_monitor"] = here[0].name
+            if self.minimized:  # the dot keeps its own spot; the strip's is untouched for when it comes back
+                cfg["dot_x"], cfg["dot_y"] = x, y
+            else:
+                cfg["button_x"], cfg["button_y"], cfg["button_anchor"] = x, y, "custom"
+                here = [m for m in winapi.monitors() if m.contains(x + self.width() // 2, y + self.height() // 2)]
+                if here:
+                    cfg["button_monitor"] = here[0].name
             self.save_config()
         else:
             (action or self.trigger)()
@@ -1922,6 +2000,9 @@ def run_preview(out_dir, stage):
         if app.has_alarm:
             app.alarm_sub.config(text="Sat 11am")
         target = app.root
+    elif stage == "mini":  # minimized to the dot (shot with some desktop around it, it is only 18 px)
+        app.set_minimized(True)
+        target = app.root
     elif stage == "cluster":
         app.lock = None
         app.trigger(preview=True)
@@ -1974,8 +2055,9 @@ def run_preview(out_dir, stage):
     def shoot():
         target.lift()
         target.update()
-        box = (target.winfo_rootx(), target.winfo_rooty(),
-               target.winfo_rootx() + target.winfo_width(), target.winfo_rooty() + target.winfo_height())
+        pad = px(40) if stage == "mini" else 0
+        box = (target.winfo_rootx() - pad, target.winfo_rooty() - pad,
+               target.winfo_rootx() + target.winfo_width() + pad, target.winfo_rooty() + target.winfo_height() + pad)
         ImageGrab.grab(bbox=box, all_screens=True).save(out / f"preview-{stage}.png")
         app.root.destroy()
 
