@@ -165,3 +165,73 @@ def test_emergency_exit_closes_the_bored_panel_as_stopped(make_app):
     hold(panel.exit, clock, 3)
     assert not panel.win.winfo_exists()
     assert panel.event["done"] is False and panel.event["seconds"] == 0 and panel.event["choices"] == ["outside"]
+
+
+def _settle(app, seconds=5):
+    import time
+    end = time.time() + seconds
+    while app._notes_running and time.time() < end:
+        app.root.update()
+        time.sleep(0.05)
+
+
+def test_a_crashing_notes_run_never_leaves_the_button_stuck(make_app, monkeypatch):
+    import notes
+    monkeypatch.setattr(notes, "installed", lambda: True)
+    calls = []
+
+    import threading
+    gate = threading.Event()
+    shown = []
+
+    def boom(*a, **k):
+        gate.wait(5)
+        calls.append(1)
+        raise ValueError("bad output")
+
+    class FakeDone:
+        def __init__(self, app, result):
+            shown.append(result)
+            self.win = tk.Toplevel(app.root)
+            self.win.withdraw()
+
+        def close(self):
+            self.win.destroy()
+
+    monkeypatch.setattr(notes, "form_now", boom)
+    monkeypatch.setattr(urge_button, "NotesDone", FakeDone)
+    app = make_app()
+    app.notes_press()
+    gate.set()
+    assert app.notes_sub.cget("text") == "forming..."
+    _settle(app)
+    assert not app._notes_running and app.notes_sub.cget("text") == "form now"
+    assert shown[0].kind == "failed" and "ValueError" in shown[0].line
+    app.notes_press()
+    _settle(app)
+    assert len(calls) == 2 and not app._notes_running
+
+
+def test_form_now_turns_any_exception_into_a_failed_result(monkeypatch):
+    import notes
+
+    def boom(command, timeout):
+        raise ValueError("x")
+
+    monkeypatch.setattr(notes, "_run", boom)
+    result = notes.form_now()
+    assert result.kind == "failed" and "ValueError" in result.line
+
+
+def test_no_update_restart_while_notes_are_forming(make_app, monkeypatch):
+    app = make_app()
+    app.updater.ready = True
+    monkeypatch.setattr(urge_button.winapi, "idle_seconds", lambda: 10_000)
+    restarts = []
+    monkeypatch.setattr(app, "restart_to_update", lambda: restarts.append(1))
+    app._notes_running = True
+    app._auto_restart()
+    assert not restarts
+    app._notes_running = False
+    app._auto_restart()
+    assert restarts == [1]

@@ -48,14 +48,14 @@ def _run(command, timeout):
 
 
 def form_now(timeout=600):
-    """`watch` (pull the inbox) then `form` (today's entry). Never raises: a missing venv or a hang is a failed Result.
+    """`watch` (pull the inbox) then `form` (today's entry). Never raises: a missing venv, a hang or anything unexpected is a failed Result.
 
     `form` first waits up to six minutes for a watch tick when one holds the lock, so the timeout stays long.
     """
     try:
         watch = _run("watch", timeout)
         form = _run("form", timeout)
-    except (OSError, subprocess.TimeoutExpired) as e:
+    except Exception as e:  # noqa: BLE001 - this must never raise into the worker thread
         return Result("failed", f"{LINES['failed']}: {type(e).__name__}")
     result = classify(watch.returncode, form.returncode, (form.stdout or "") + (form.stderr or ""))
     if result.kind == "formed":

@@ -1653,8 +1653,15 @@ class App:
             self.notes_done.close()
         self._notes_running = True
         self.notes_sub.config(text="forming...")
-        threading.Thread(target=lambda: self._notes_results.put(notes.form_now()), daemon=True).start()
+        threading.Thread(target=self._notes_worker, daemon=True).start()
         self._notes_show()
+
+    def _notes_worker(self):
+        try:
+            result = notes.form_now()
+        except Exception as e:  # noqa: BLE001 - always answer, or the button stays on "forming..." forever
+            result = notes.Result("failed", f"{notes.LINES['failed']}: {type(e).__name__}")
+        self._notes_results.put(result)
 
     def _notes_show(self):
         if self._notes_results.empty():
@@ -1867,7 +1874,7 @@ class App:
 
     def _auto_restart(self):
         """Apply a downloaded update the moment nothing's open and the computer has been left alone."""
-        if restart_allowed(self.updater.ready, self.open_windows(), winapi.idle_seconds()):
+        if not self._notes_running and restart_allowed(self.updater.ready, self.open_windows(), winapi.idle_seconds()):
             self.restart_to_update()
             return
         self.root.after(RESTART_POLL_SECONDS * 1000, self._auto_restart)
