@@ -458,3 +458,17 @@ def test_push_message_only_before_a_hard_hour():
     assert hp.message(nine_pm, dict(push, enabled=False), now) is None
     just_now = nine_pm + [{"t": int((now - timedelta(minutes=5)).timestamp() * 1000)}]
     assert hp.message(just_now, push, now) is None                             # you just logged one
+
+
+def test_emergency_exit_rides_on_the_urge_only_when_set(tmp_path):
+    import sync
+    log = EventLog(tmp_path / "events.json", now=lambda: NOW)
+    cut, plain = log.record_press(3), log.record_press(3)
+    log.record_emergency_exit(cut)
+    assert cut["emergency_exit"] is True and "emergency_exit" not in plain
+    shared = {s["id"]: s for s in log.shared()}
+    assert shared[cut["id"]]["emergency_exit"] is True and "emergency_exit" not in shared[plain["id"]]
+    assert sync.from_shared(shared[cut["id"]])["emergency_exit"] is True
+    assert sync.from_shared(shared[plain["id"]])["emergency_exit"] is None
+    assert sync.merge([shared[cut["id"]]], [])[0]["emergency_exit"] is True
+    assert EventLog(tmp_path / "events.json", now=lambda: NOW).events[0]["emergency_exit"] is True

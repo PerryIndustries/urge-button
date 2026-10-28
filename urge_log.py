@@ -4,6 +4,8 @@ Every urge is one event in events.json:
     {"ts": "2026-10-10T21:14:03", "kind": "lock" | "logged", "minutes": 3,
      "choices": ["walk", ...], "intensity": 1-5 or null}
 "lock" = the button was pressed and the screen locked; "logged" = handled it without locking.
+A lock cut short with the Emergency exit (held three seconds) also carries "emergency_exit": true;
+the field is absent otherwise.
 
 A Bored press is an event in the same file with "kind": "bored" and "choices": [what you picked] (a
 BORED_IDEAS id, or the text of your own idea). It is tracked on its own: nothing that counts urges
@@ -377,6 +379,11 @@ class EventLog:
 
     def record_intensity(self, event, intensity):
         event["intensity"] = int(intensity)
+        self._changed(event)
+
+    def record_emergency_exit(self, event):
+        """The lock was cut short with the Emergency exit (held for three seconds). Written only when it happened."""
+        event["emergency_exit"] = True
         self._changed(event)
 
     # how a Bored activity went

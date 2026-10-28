@@ -15,8 +15,10 @@ Right-click any button for Progress, Sudoku, logging an urge you handled without
 the lock, Minimize (the whole strip becomes one small dot; click it to bring the
 strip back), Settings and Quit. Data lives in %APPDATA%\\UrgeButton.
 
-Ctrl+Alt+Del is handled by Windows itself and cannot be blocked - that is the
-deliberate hard exit. The lock always ends on its own when the timer runs out.
+Two ways out early, both deliberate: Ctrl+Alt+Del, which Windows handles itself
+and cannot be blocked, and a quiet Emergency exit in the corner of the lock screen
+(and at the foot of the Bored panel) that fires only after a three-second hold and
+marks the urge as cut short. The lock always ends on its own when the timer runs out.
 
     pythonw urge_button.py                       run it
     python urge_button.py --install              desktop shortcut + start with Windows
@@ -140,6 +142,69 @@ def load_photo(path, max_h):
     return img.subsample(factor, factor) if factor > 1 else img
 
 
+HOLD_SECONDS = 3
+
+
+class HoldToFire(tk.Canvas):
+    """A small, quiet control that fires only after being held for HOLD_SECONDS: the emergency exit on the lock
+    screen and in the Bored panel. While it is held the text counts down (Hold... 3, 2, 1) over a filling bar;
+    letting go early resets it, and it fires once. Time is read from the clock (`now`), so a test can drive it."""
+
+    W, H, BAR = 124, 26, 2
+
+    def __init__(self, master, on_fire, text="Emergency exit", bg=BG, now=time.monotonic):
+        self.on_fire, self.text, self.now = on_fire, text, now
+        self.idle = mix(bg, MUTED, 0.55)  # low contrast until you reach for it
+        w, h = self.w, self.h = px(self.W), px(self.H)
+        super().__init__(master, width=w, height=h, bg=bg, highlightthickness=0, cursor="hand2")
+        self.started = None
+        self.fired = False
+        self._job = None
+        self.bar = self.create_rectangle(0, h - px(self.BAR), 0, h, fill=WARN, outline="")
+        self.label = self.create_text(w / 2, (h - px(self.BAR)) / 2, text=text, fill=self.idle, font=(FONT, 9))
+        self.bind("<ButtonPress-1>", self.press)
+        self.bind("<ButtonRelease-1>", self.release)
+        self.bind("<Enter>", lambda e: self.itemconfig(self.label, fill=MUTED))
+        self.bind("<Leave>", lambda e: self.started is None and self.itemconfig(self.label, fill=self.idle))
+
+    def press(self, e=None):
+        if self.fired:
+            return
+        self.started = self.now()
+        self.tick()
+
+    def release(self, e=None):
+        self.started = None
+        self._cancel()
+        if self.fired or not self.winfo_exists():
+            return
+        self.itemconfig(self.label, text=self.text, fill=self.idle)
+        self.coords(self.bar, 0, self.h - px(self.BAR), 0, self.h)
+
+    def _cancel(self):
+        if self._job:
+            try:
+                self.after_cancel(self._job)
+            except tk.TclError:
+                pass
+            self._job = None
+
+    def tick(self):
+        self._cancel()
+        if self.fired or self.started is None or not self.winfo_exists():
+            return
+        held = self.now() - self.started
+        if held >= HOLD_SECONDS:
+            self.fired = True
+            self.started = None
+            self.coords(self.bar, 0, self.h - px(self.BAR), self.w, self.h)
+            self.on_fire()
+            return
+        self.itemconfig(self.label, text=f"Hold... {math.ceil(HOLD_SECONDS - held)}", fill=TEXT)
+        self.coords(self.bar, 0, self.h - px(self.BAR), self.w * held / HOLD_SECONDS, self.h)
+        self._job = self.after(50, self.tick)
+
+
 # --------------------------------------------------------------------------- lock screen
 
 
@@ -190,6 +255,14 @@ class LockScreen:
         self.stage = tk.Frame(self.body, bg=BG)
         self.stage.pack()
         self.show_start_rating()
+
+        # The emergency exit: quiet, in the bottom-right corner of the monitor the message is on, and only a
+        # three-second hold fires it. Every monitor stays covered until then. Gone once the timer is done.
+        self.exit = HoldToFire(self.win, self.emergency_exit)
+        if preview:
+            self.exit.place(relx=1.0, rely=1.0, x=-px(24), y=-px(24), anchor="se")
+        else:
+            self.exit.place(x=mon.x - vx + mon.w - px(24), y=mon.y - vy + mon.h - px(24), anchor="se")
 
         self.tick()
         if not preview:
@@ -391,6 +464,7 @@ class LockScreen:
         self.done = True
         if self.blocker:
             self.blocker.stop()
+        self.exit.destroy()  # Unlock is the way out from here
         self.clock.config(text="You made it.", fg=GOOD, font=(FONT, 48, "bold"))
         self.clock.pack_configure(pady=(10, 18))
         self.show_why(False)
@@ -407,6 +481,14 @@ class LockScreen:
         self.triggers = set(self.event.get("triggers") or [])
         trigger_chips(self.stage, self.triggers, lambda s: self.app.log.record_triggers(self.event, sorted(s))).pack()
         button(self.stage, "Unlock", self.close, primary=True, size=16).pack(pady=(px(24), 0))
+
+    def emergency_exit(self):
+        """Held the Emergency exit for three seconds: the lock ends now, exactly as Unlock would, and the urge keeps
+        a mark that it was cut short."""
+        if self.done or not self.win.winfo_exists():
+            return
+        self.app.log.record_emergency_exit(self.event)
+        self.close()
 
     def close(self):
         if self.blocker:
@@ -608,7 +690,8 @@ class BoredPanel:
     closing without picking leaves it as just a press. Sudoku and music open something else; every other
     idea grows the panel into an activity (a timer, a text box, a friend to text, a glass of water) that
     ends with Done or Stop, and how it went lands on the same event. The panel never locks anything and
-    the ✕ closes it at any point - mid-activity that counts as stopping early.
+    the ✕ closes it at any point - mid-activity that counts as stopping early - as does the Emergency exit
+    at its foot after a three-second hold.
     """
 
     FAREWELL_MS = 2500
@@ -631,7 +714,11 @@ class BoredPanel:
         w.overrideredirect(True)
         w.attributes("-topmost", True)
         self.inner = tk.Frame(w, bg=PANEL, padx=px(16), pady=px(12))
-        self.inner.pack(padx=2, pady=2)
+        self.inner.pack(padx=2, pady=(2, 0))
+        foot = tk.Frame(w, bg=PANEL)  # stays under whatever the panel shows
+        foot.pack(fill="x", padx=2, pady=(0, 2))
+        self.exit = HoldToFire(foot, self.close, bg=PANEL)
+        self.exit.pack(side="right", padx=(0, px(8)), pady=(0, px(4)))
         self.show_ideas()
 
     # -- the panel's shape

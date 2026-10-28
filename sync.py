@@ -7,9 +7,11 @@ Merging is safe to repeat, so a sync that loses a race just runs again.
 
 events.json: {"version": 1, "events": [
     {"id", "t" (epoch ms), "kind", "minutes", "choices", "intensity_start", "intensity", "triggers", "u",
-     and on a Bored press that ran an activity: "done", "seconds", "note", "amount"}]}
+     on a Bored press that ran an activity: "done", "seconds", "note", "amount",
+     and on a lock cut short with the Emergency exit: "emergency_exit": true}]}
     `kind` is "lock" or "logged" for an urge and "bored" for a Bored press; they share the file and the merge.
-    The activity fields are only written when set, so a copy of the app from before them reads the same file.
+    The activity and emergency-exit fields are only written when set, so a copy of the app from before them
+    reads the same file.
 sudoku.json: {"version": 1, "games": [finished or abandoned games, see sudoku.py],
               "current": the puzzle in progress (the copy with the newer `u` wins) or null}
 """
@@ -25,8 +27,9 @@ from datetime import datetime
 DEFAULT_REPO = "PerryIndustries/urge-data"
 PATH = "events.json"
 SUDOKU_PATH = "sudoku.json"
-FIELDS = ("kind", "minutes", "choices", "intensity_start", "intensity", "triggers", "done", "seconds", "note", "amount")
-SPARSE = ("done", "seconds", "note", "amount")  # how a Bored activity went: left out of the file when unset
+FIELDS = ("kind", "minutes", "choices", "intensity_start", "intensity", "triggers", "done", "seconds", "note", "amount",
+          "emergency_exit")
+SPARSE = ("done", "seconds", "note", "amount", "emergency_exit")  # left out of the file when unset
 
 
 def to_shared(event):
