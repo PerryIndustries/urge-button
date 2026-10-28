@@ -33,11 +33,13 @@ import sys
 import threading
 import time
 import tkinter as tk
+import webbrowser
 from datetime import datetime
 from pathlib import Path
 
 import alarm
 import food
+import notes
 import placement
 import sync
 from blocker import AppBlocker, running_apps
@@ -466,6 +468,46 @@ class HeadsUp:
     def lock_now(self):
         self.close()
         self.app.trigger()
+
+    def close(self):
+        if self.win.winfo_exists():
+            self.win.destroy()
+
+
+class NotesDone:
+    """The Notes button's answer, a small note beside the button: formed (with the first line of the entry),
+    nothing new, already up to date, busy, or a problem. Open Doc goes to the running Google Doc."""
+
+    TITLES = {"formed": "Notes formed", "nothing": "Nothing new", "already": "Already formed",
+              "busy": "Notes are busy", "failed": "Notes did not form"}
+
+    def __init__(self, app, result):
+        self.app = app
+        w = self.win = tk.Toplevel(app.root, bg=GOOD)
+        w.overrideredirect(True)
+        w.attributes("-topmost", True)
+        inner = tk.Frame(w, bg=PANEL, padx=px(16), pady=px(12))
+        inner.pack(padx=2, pady=2)
+        tk.Label(inner, text=self.TITLES.get(result.kind, "Notes"), font=(FONT, 12, "bold"), fg=TEXT, bg=PANEL,
+                 anchor="w").pack(fill="x")
+        tk.Label(inner, text=result.line, font=(FONT, 10), fg=BAD if result.kind == "failed" else MUTED, bg=PANEL,
+                 justify="left", anchor="w", wraplength=px(360)).pack(fill="x", pady=(4, 0))
+        if result.kind == "formed" and result.gist:
+            tk.Label(inner, text=result.gist, font=(FONT, 11), fg=TEXT, bg=PANEL, justify="left", anchor="w",
+                     wraplength=px(360)).pack(fill="x", pady=(8, 0))
+        bar = tk.Frame(inner, bg=PANEL)
+        bar.pack(fill="x", pady=(10, 0))
+        button(bar, "Got it", self.close, size=10).pack(side="right")
+        url = notes.doc_url()
+        if url:
+            button(bar, "Open Doc", lambda: self.open_doc(url), primary=True, size=10).pack(side="right", padx=6)
+        beside_button(app, w)
+        w.after(60_000, self.close)
+
+    def open_doc(self, url):
+        if self.app.online:  # previews never open a browser
+            webbrowser.open(url)
+        self.close()
 
     def close(self):
         if self.win.winfo_exists():
@@ -1303,6 +1345,7 @@ class App:
     BW, GAP = 76, 4    # the smaller Bored button beside it, and the seam between the two
     FW = 76            # the Food timer button after Bored
     AW = 76            # the Alarm button after Food (only when ~/Alarm is installed)
+    NW = 76            # the Notes button last (only when the voicenotes pipeline is installed)
     BORDER = 2         # the bright outline that makes it findable on a dark screen
     ON_TOP_SECONDS = 2  # how often it checks that nothing has covered it
 
@@ -1326,6 +1369,7 @@ class App:
                        highlightcolor=ACCENT_BRIGHT)
 
         self.has_alarm = alarm.installed()
+        self.has_notes = notes.installed()
         self.place_button()
 
         # One window, two buttons: URGE on the left, Bored on the right. They move and dock together.
@@ -1369,6 +1413,22 @@ class App:
             for wdg in alarm_widgets:
                 wdg.bind("<Enter>", lambda e: [x.config(bg=mix(ACCENT_SOFT, "#FFFFFF", 0.12)) for x in alarm_widgets])
                 wdg.bind("<Leave>", lambda e: [x.config(bg=ACCENT_SOFT) for x in alarm_widgets])
+        notes_widgets = ()
+        if self.has_notes:
+            self.notes_face = tk.Frame(root, bg=GOOD, cursor="hand2", width=px(self.NW), height=px(self.H))
+            self.notes_face.pack(side="left", fill="y", padx=(px(self.GAP), 0))
+            self.notes_face.pack_propagate(False)
+            self.notes_title = tk.Label(self.notes_face, text="Notes", font=(FONT, 11, "bold"), fg=BG, bg=GOOD)
+            self.notes_sub = tk.Label(self.notes_face, text="form now", font=(FONT, 8), fg=BG, bg=GOOD)
+            self.notes_title.pack(pady=(px(14), 0))
+            self.notes_sub.pack()
+            notes_widgets = (self.notes_face, self.notes_title, self.notes_sub)
+            for wdg in notes_widgets:
+                wdg.bind("<Enter>", lambda e: [x.config(bg=mix(GOOD, "#FFFFFF", 0.15)) for x in notes_widgets])
+                wdg.bind("<Leave>", lambda e: [x.config(bg=GOOD) for x in notes_widgets])
+        self.notes_done = None
+        self._notes_running = False
+        self._notes_results = queue.Queue()
         bored_widgets = (self.bored_face, self.bored_title, self.bored_sub)
         for wdg in bored_widgets:
             wdg.bind("<Enter>", lambda e: [x.config(bg=mix(CALM, "#FFFFFF", 0.08)) for x in bored_widgets])
@@ -1412,6 +1472,11 @@ class App:
             wdg.bind("<ButtonPress-1>", self._press)
             wdg.bind("<B1-Motion>", self._drag)
             wdg.bind("<ButtonRelease-1>", lambda e: self._release(e, self.alarm_press))
+            wdg.bind("<Button-3>", lambda e: menu.tk_popup(e.x_root, e.y_root))
+        for wdg in notes_widgets:
+            wdg.bind("<ButtonPress-1>", self._press)
+            wdg.bind("<B1-Motion>", self._drag)
+            wdg.bind("<ButtonRelease-1>", lambda e: self._release(e, self.notes_press))
             wdg.bind("<Button-3>", lambda e: menu.tk_popup(e.x_root, e.y_root))
 
         self.hotkey = winapi.Hotkey((("U", "urge"), ("B", "bored")))
@@ -1473,6 +1538,28 @@ class App:
             return
         s = self._alarm_results.get()
         self.alarm_sub.config(text=alarm.label(s.get("next"), datetime.now()) if s else "?")
+
+    # -- the Notes button
+
+    def notes_press(self):
+        """Form today's written notes now, off the UI thread. One run at a time; the answer lands beside the button."""
+        if self._notes_running:
+            return
+        if self.notes_done and self.notes_done.win.winfo_exists():
+            self.notes_done.close()
+        self._notes_running = True
+        self.notes_sub.config(text="forming...")
+        threading.Thread(target=lambda: self._notes_results.put(notes.form_now()), daemon=True).start()
+        self._notes_show()
+
+    def _notes_show(self):
+        if self._notes_results.empty():
+            self.root.after(500, self._notes_show)
+            return
+        result = self._notes_results.get()
+        self._notes_running = False
+        self.notes_sub.config(text="form now")
+        self.notes_done = NotesDone(self, result)
 
     # -- the Food timer
 
@@ -1704,9 +1791,10 @@ class App:
             self.sudoku_win = SudokuWindow(self)
 
     def width(self):
-        """The whole floating window: URGE, Bored, Food and (when installed) Alarm, with a seam between each."""
+        """The whole floating window: URGE, Bored, Food and (when installed) Alarm and Notes, with a seam between each."""
         alarm_w = self.GAP + self.AW if self.has_alarm else 0
-        return px(self.W + self.GAP + self.BW + self.GAP + self.FW + alarm_w) + 2 * px(self.BORDER)
+        notes_w = self.GAP + self.NW if self.has_notes else 0
+        return px(self.W + self.GAP + self.BW + self.GAP + self.FW + alarm_w + notes_w) + 2 * px(self.BORDER)
 
     def height(self):
         return px(self.H) + 2 * px(self.BORDER)
@@ -1843,6 +1931,10 @@ def run_preview(out_dir, stage):
         target = app.lock.win
     elif stage == "headsup":
         target = HeadsUp(app, 21).win
+    elif stage == "notesdone":  # the Notes button's answer, formed; previews never run the pipeline
+        sample = notes.Result("formed", notes.LINES["formed"], gist="Five channels, one system: most of the day went "
+                              "on the marketing plan, and the lessons format is the thing to own.")
+        target = NotesDone(app, sample).win
     elif stage == "food":  # the timer running, pressed again
         app.food_set(time.time() + 18 * 60)
         app.food_press()

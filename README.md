@@ -20,11 +20,13 @@ python urge_button.py --install
 
 **Alarm:** when the Wake Alarm is installed in `~/Alarm` (PerryIndustries/wake-alarm), a purple Alarm button sits after Food. It shows when the alarm next rings (`9am` today, `Sat 11am` later, `off` with none set, refreshed every 5 minutes) and opens the alarm panel: alarms, typing speed and the night screen timer.
 
+**Notes:** when the voicenotes pipeline is installed in `~/Desktop/voicenotes`, a mint Notes button sits last. Pressing it forms today's written notes right away (the pipeline's `watch`, then `form`, with no window) and a small note beside the button says how it went: formed, with the first line of the entry and Open Doc for the running Google Doc; nothing new in the inbox; already up to date; busy because another run has the lock; or a problem, pointing at `pipeline\logs`. The button reads `forming...` while it runs and a second press waits for the first.
+
 **Updates:** the app keeps itself up to date from this repo (on start and every 30 minutes, like Rift Pen). New versions download in the background and install themselves the first time nothing is open (no lock, no Sudoku, Settings or Progress window) and the keyboard and mouse have been quiet for two minutes - or right away from "Restart to update" in the right-click menu, or at the next start. It only updates a clean checkout of `main`, so local edits are never overwritten.
 
 Your history and settings live in `%APPDATA%\UrgeButton\` (`events.json`, `sudoku.json`, `config.json`), not in the repo. To bring your history to another computer, copy that folder across.
 
-Tests: `python -m pytest tests`. Screenshots of any screen without locking (needs Pillow): `python urge_button.py --preview <dir> <options|sudoku|friend|walk|spotify|finish|progress|logged|settings|button|sudokuwin|sudokusolved|sudokunew|bored|boredwrite|boredstretch|boredtimer|boredtidy|boredread|boredpractice|boredfriend|boredwater|boredcustom|borednotes|borednoticed|boredpages|boredpicked|headsup|cluster>`.
+Tests: `python -m pytest tests`. Screenshots of any screen without locking (needs Pillow): `python urge_button.py --preview <dir> <options|sudoku|friend|walk|spotify|finish|progress|logged|settings|button|sudokuwin|sudokusolved|sudokunew|bored|boredwrite|boredstretch|boredtimer|boredtidy|boredread|boredpractice|boredfriend|boredwater|boredcustom|borednotes|borednoticed|boredpages|boredpicked|headsup|notesdone|cluster>`.
 
 ## Sudoku
 
