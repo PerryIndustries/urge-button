@@ -22,7 +22,7 @@ LINES = {
     "formed": "Your notes are formed",
     "nothing": "Nothing new since last time",
     "busy": "Busy right now, try again in a minute",
-    "failed": "Could not form your notes, see pipeline\logs",
+    "failed": "Could not form your notes, see pipeline\\logs",
 }
 NOT_FETCHED = "voice notes could not be fetched"
 COUNTS = re.compile(r"^now: (\d+) voice, (\d+) written\s*$", re.M)
