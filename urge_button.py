@@ -1433,7 +1433,8 @@ class App:
     BW, GAP = 76, 4    # the smaller Bored button beside it, and the seam between the two
     FW = 76            # the Food timer button after Bored
     AW = 76            # the Alarm button after Food (only when ~/Alarm is installed)
-    NW = 76            # the Notes button last (only when the voicenotes pipeline is installed)
+    NW = 76            # the Notes button (only when the voicenotes pipeline is installed)
+    SW = 76            # the Screen button last: turns the monitors off
     BORDER = 2         # the bright outline that makes it findable on a dark screen
     DOT = 18           # the whole window when minimized: one round dot
     CLEAR = "#010203"  # the dot window's see-through colour (Windows -transparentcolor), so only the dot shows
@@ -1463,7 +1464,7 @@ class App:
         self.minimized = bool(self.config.get("minimized"))
         self.place_button()
 
-        # One window, a strip of buttons: URGE on the left, then Bored, Food, Alarm and Notes. They move and dock
+        # One window, a strip of buttons: URGE on the left, then Bored, Food, Alarm, Notes and Screen. They move and dock
         # together, and Minimize swaps the whole strip for one small dot.
         strip = self.strip = tk.Frame(root, bg=BG)
         self.face = tk.Frame(strip, bg=ACCENT, cursor="hand2", width=px(self.W), height=px(self.H))
@@ -1519,6 +1520,17 @@ class App:
             for wdg in notes_widgets:
                 wdg.bind("<Enter>", lambda e: [x.config(bg=mix(GOOD, "#FFFFFF", 0.15)) for x in notes_widgets])
                 wdg.bind("<Leave>", lambda e: [x.config(bg=GOOD) for x in notes_widgets])
+        self.screen_face = tk.Frame(strip, bg=PANEL_HI, cursor="hand2", width=px(self.SW), height=px(self.H))
+        self.screen_face.pack(side="left", fill="y", padx=(px(self.GAP), 0))
+        self.screen_face.pack_propagate(False)
+        self.screen_title = tk.Label(self.screen_face, text="Screen", font=(FONT, 11, "bold"), fg=TEXT, bg=PANEL_HI)
+        self.screen_sub = tk.Label(self.screen_face, text="off", font=(FONT, 8), fg=TEXT, bg=PANEL_HI)
+        self.screen_title.pack(pady=(px(14), 0))
+        self.screen_sub.pack()
+        screen_widgets = (self.screen_face, self.screen_title, self.screen_sub)
+        for wdg in screen_widgets:
+            wdg.bind("<Enter>", lambda e: [x.config(bg=mix(PANEL_HI, "#FFFFFF", 0.12)) for x in screen_widgets])
+            wdg.bind("<Leave>", lambda e: [x.config(bg=PANEL_HI) for x in screen_widgets])
         self.notes_done = None
         self._notes_running = False
         self._notes_results = queue.Queue()
@@ -1582,6 +1594,11 @@ class App:
             wdg.bind("<B1-Motion>", self._drag)
             wdg.bind("<ButtonRelease-1>", lambda e: self._release(e, self.notes_press))
             wdg.bind("<Button-3>", lambda e: menu.tk_popup(e.x_root, e.y_root))
+        for wdg in screen_widgets:
+            wdg.bind("<ButtonPress-1>", self._press)
+            wdg.bind("<B1-Motion>", self._drag)
+            wdg.bind("<ButtonRelease-1>", lambda e: self._release(e, self.screen_press))
+            wdg.bind("<Button-3>", lambda e: menu.tk_popup(e.x_root, e.y_root))
 
         self.hotkey = winapi.Hotkey((("U", "urge"), ("B", "bored")))
         registered = self.hotkey.start() if hotkey else {}
@@ -1620,6 +1637,13 @@ class App:
         self._alarm_results = queue.Queue()
         if self.has_alarm:
             self._alarm_tick(read=hotkey)  # previews don't run the alarm's PowerShell
+
+    # -- the Screen button
+
+    def screen_press(self):
+        # A beat first, so the hand still settling on the mouse after the click doesn't wake them straight back up.
+        if self.online:  # previews never blank the real screens
+            self.root.after(800, winapi.monitors_off)
 
     # -- the Alarm button
 
@@ -1902,8 +1926,8 @@ class App:
             self.sudoku_win = SudokuWindow(self)
 
     def width(self):
-        """The whole floating window: the strip (URGE, Bored, Food and, when installed, Alarm and Notes, with a seam
-        between each), or just the dot when minimized."""
+        """The whole floating window: the strip (URGE, Bored, Food, when installed Alarm and Notes, then Screen, with a
+        seam between each), or just the dot when minimized."""
         return px(self.DOT) if self.minimized else self.strip_size()[0]
 
     def height(self):
@@ -1912,7 +1936,8 @@ class App:
     def strip_size(self):
         alarm_w = self.GAP + self.AW if self.has_alarm else 0
         notes_w = self.GAP + self.NW if self.has_notes else 0
-        w = px(self.W + self.GAP + self.BW + self.GAP + self.FW + alarm_w + notes_w) + 2 * px(self.BORDER)
+        w = px(self.W + self.GAP + self.BW + self.GAP + self.FW + alarm_w + notes_w + self.GAP + self.SW) \
+            + 2 * px(self.BORDER)
         return w, px(self.H) + 2 * px(self.BORDER)
 
     def strip_spot(self, mons, w, h):

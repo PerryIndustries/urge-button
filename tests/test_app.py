@@ -235,3 +235,26 @@ def test_no_update_restart_while_notes_are_forming(make_app, monkeypatch):
     app._notes_running = False
     app._auto_restart()
     assert restarts == [1]
+
+
+def test_screen_button_turns_the_monitors_off_after_a_beat(make_app, monkeypatch):
+    app = make_app()
+    calls = []
+    monkeypatch.setattr(urge_button.winapi, "monitors_off", lambda: calls.append("off"))
+    app.online = True  # previews (online False) never blank the real screens
+    app.screen_press()
+    assert calls == []  # not on the click itself, so the settling hand doesn't wake them
+    app.root.after(1200, app.root.quit)
+    app.root.mainloop()
+    assert calls == ["off"]
+    assert app.strip_size()[0] >= urge_button.px(app.W + app.BW + app.FW + app.SW)
+
+
+def test_screen_button_does_nothing_in_a_preview(make_app, monkeypatch):
+    app = make_app()
+    calls = []
+    monkeypatch.setattr(urge_button.winapi, "monitors_off", lambda: calls.append("off"))
+    app.screen_press()
+    app.root.after(1200, app.root.quit)
+    app.root.mainloop()
+    assert calls == []

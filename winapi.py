@@ -182,6 +182,16 @@ def press_media_play():
     user32.keybd_event(VK_MEDIA_PLAY_PAUSE, 0, 2, 0)
 
 
+HWND_BROADCAST, WM_SYSCOMMAND, SC_MONITORPOWER, MONITOR_OFF = 0xFFFF, 0x0112, 0xF170, 2
+user32.PostMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+
+
+def monitors_off():
+    """Every monitor goes dark now (the PC stays awake); any mouse move or key brings them back. Posted, not sent,
+    so a hung window can't stall the caller."""
+    user32.PostMessageW(HWND_BROADCAST, WM_SYSCOMMAND, SC_MONITORPOWER, MONITOR_OFF)
+
+
 class LASTINPUTINFO(ctypes.Structure):
     _fields_ = [("cbSize", wintypes.UINT), ("dwTime", wintypes.DWORD)]
 
