@@ -559,9 +559,9 @@ class HeadsUp:
 
 class NotesDone:
     """The Notes button's answer, a small note beside the button: formed (with the first line of the entry),
-    nothing new, already up to date, busy, or a problem. Open Doc goes to the running Google Doc."""
+    nothing new, busy, or a problem. Open Doc goes to the running Google Doc."""
 
-    TITLES = {"formed": "Notes formed", "nothing": "Nothing new", "already": "Already formed",
+    TITLES = {"formed": "Notes formed", "nothing": "Nothing new",
               "busy": "Notes are busy", "failed": "Notes did not form"}
 
     def __init__(self, app, result):
@@ -1646,7 +1646,7 @@ class App:
     # -- the Notes button
 
     def notes_press(self):
-        """Form today's written notes now, off the UI thread. One run at a time; the answer lands beside the button."""
+        """Add the new voice notes and written sessions now, off the UI thread. One run at a time; the answer lands beside the button."""
         if self._notes_running:
             return
         if self.notes_done and self.notes_done.win.winfo_exists():
@@ -2107,7 +2107,7 @@ def run_preview(out_dir, stage):
     elif stage == "headsup":
         target = HeadsUp(app, 21).win
     elif stage == "notesdone":  # the Notes button's answer, formed; previews never run the pipeline
-        sample = notes.Result("formed", notes.LINES["formed"], gist="Five channels, one system: most of the day went "
+        sample = notes.Result("formed", "Added 2 voice notes and 1 written entry", gist="Five channels, one system: most of the day went "
                               "on the marketing plan, and the lessons format is the thing to own.")
         target = NotesDone(app, sample).win
     elif stage == "food":  # the timer running, pressed again
