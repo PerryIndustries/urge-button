@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import urge_button  # noqa: E402
 from sudoku import SudokuLog  # noqa: E402
+from placement import Monitor  # noqa: E402
 from theme import px  # noqa: E402
 from urge_log import EventLog, bored_name, load_config, load_json  # noqa: E402
 
@@ -74,19 +75,98 @@ def test_minimize_is_a_dot_and_survives_a_restart(make_app, cfg_path):
     assert "Minimize" in labels(again.menu) and "Restore" not in labels(again.menu)
 
 
-def test_dot_click_restores_but_a_drag_only_moves_it(make_app, cfg_path):
+MAIN = Monitor("\\\\.\\DISPLAY1", 0, 0, 1920, 1080, (0, 0, 1920, 1040), primary=True)
+LEFT = Monitor("\\\\.\\DISPLAY2", -1920, 0, 1920, 1080, (-1920, 0, 1920, 1040))
+
+
+@pytest.fixture
+def screens(monkeypatch):
+    """The monitors the app sees; tests change the list to plug and unplug them."""
+    mons = [MAIN, LEFT]
+    monkeypatch.setattr(urge_button.winapi, "monitors", lambda: list(mons))
+    return mons
+
+
+def drop_at(app, x, y):
+    """Drag the window so its top-left lands on (x, y), as a mouse drag would. (The test window is hidden, so Tk
+    can't report where it is; the drop reads the position from here instead.)"""
+    app._moved = True
+    app.root.winfo_x, app.root.winfo_y = (lambda: x), (lambda: y)
+    try:
+        app._release(E(x, y), app.restore)
+    finally:
+        del app.root.winfo_x, app.root.winfo_y
+
+
+def spot(app):
+    w, h = app.width(), app.height()
+    return (app.dot_spot if app.minimized else app.strip_spot)(urge_button.winapi.monitors(), w, h)
+
+
+def test_dot_click_restores_but_a_drag_only_moves_it(make_app, cfg_path, screens):
     app = make_app()
     app.minimize()
-    app._press(E(100, 100))
-    app._drag(E(140, 130))
-    app._release(E(140, 130), app.restore)
-    cfg = load_json(cfg_path, {})
+    drop_at(app, -1800, 200)
     assert app.minimized                                   # a drag is not a click
-    assert (cfg["dot_x"], cfg["dot_y"]) == (app.root.winfo_x(), app.root.winfo_y())
-    assert cfg["button_x"] is None and cfg["button_anchor"] == "bottom-right"   # the cluster's own spot is untouched
+    assert spot(app) == (-1800, 200, LEFT)                 # the dot stays where it was dropped
+    assert load_json(cfg_path, {})["button_monitor"] == LEFT.name
     app._press(E(100, 100))
     app._release(E(101, 100), app.restore)
     assert not app.minimized
+
+
+def test_dot_and_strip_share_one_spot_on_the_same_monitor(make_app, screens):
+    app = make_app()
+    drop_at(app, -700, 900)                                # strip near the bottom-right of the left monitor
+    sx, sy, mon = spot(app)
+    assert mon == LEFT and (sx, sy) == (-700, 900)
+    sw, sh = app.width(), app.height()
+    app.minimize()
+    dx, dy, dmon = spot(app)
+    d = app.width()
+    assert dmon == LEFT and (dx + d, dy + d) == (sx + sw, sy + sh)   # the dot sits on the strip's outer corner
+    drop_at(app, -1880, 20)                                # move the dot to the top-left of that monitor...
+    app.restore()
+    assert spot(app) == (-1880, 20, LEFT)                  # ...and the strip comes back growing out from it
+
+
+def test_unplugged_monitor_falls_back_to_main_and_comes_back_when_plugged_in(make_app, cfg_path, screens):
+    app = make_app()
+    drop_at(app, -1500, 300)
+    screens.remove(LEFT)
+    assert spot(app) == (420, 300, MAIN)                   # same place on the main monitor while it's gone
+    assert load_json(cfg_path, {})["button_monitor"] == LEFT.name   # but it still belongs to the left monitor
+    screens.append(LEFT)
+    assert spot(app) == (-1500, 300, LEFT)
+
+
+def test_rearranging_monitors_keeps_it_on_its_own_monitor(make_app, screens):
+    app = make_app()
+    drop_at(app, -1500, 300)
+    screens[1] = Monitor(LEFT.name, 1920, 0, 1920, 1080, (1920, 0, 1920, 1040))   # dragged to the right in Windows
+    assert spot(app)[:2] == (2340, 300)
+
+
+def test_a_spot_saved_as_desktop_coordinates_is_read_per_monitor(make_app, cfg_path, screens):
+    cfg_path.write_text('{"button_x": -1260, "button_y": 40, "button_monitor": "\\\\\\\\.\\\\DISPLAY2", '
+                        '"button_anchor": "custom"}')
+    app = make_app()
+    assert spot(app)[:2] == (-1260, 40)
+    screens[1] = Monitor(LEFT.name, 1920, 0, 1920, 1080, (1920, 0, 1920, 1040))
+    assert spot(app)[:2] == (2580, 40)
+
+
+def test_a_monitor_change_moves_the_live_window(make_app, screens):
+    app = make_app()
+    drop_at(app, -1500, 300)
+    screens.remove(LEFT)
+    placed = []
+    app.root.geometry = lambda g=None: placed.append(g)
+    app._keep_on_top()
+    assert placed and placed[-1].endswith("+420+300")
+    placed.clear()
+    app._keep_on_top()                                     # nothing changed since: left alone
+    assert placed == []
 
 
 class FakeBlocker:

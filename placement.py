@@ -74,6 +74,31 @@ def clamp(monitors, x, y, w, h):
     return x, y
 
 
+def named(monitors, name):
+    """The monitor with exactly this device name, or None when it isn't connected."""
+    return next((m for m in monitors if m.name == name), None)
+
+
+def under(monitors, x, y, w, h):
+    """The monitor a w x h window at (x, y) has its centre on, or None."""
+    cx, cy = x + w // 2, y + h // 2
+    return next((m for m in monitors if m.contains(cx, cy)), None)
+
+
+def fit(monitor, x, y, w, h):
+    """Slide a w x h window fully inside this monitor."""
+    return max(monitor.x, min(x, monitor.x + monitor.w - w)), max(monitor.y, min(y, monitor.y + monitor.h - h))
+
+
+def corner_spot(monitor, x, y, w, h, cw, ch):
+    """Where a cw x ch window goes so it shares the corner of the w x h window at (x, y) that's nearest the edges
+    of its monitor: the dot sits on the strip's outer corner, and the strip grows inward from the dot. Run it
+    either way round (strip -> dot, dot -> strip) and the shared corner stays put."""
+    right = x + w // 2 > monitor.x + monitor.w // 2
+    bottom = y + h // 2 > monitor.y + monitor.h // 2
+    return fit(monitor, x + w - cw if right else x, y + h - ch if bottom else y, cw, ch)
+
+
 def centre_in(monitor, origin_x, origin_y):
     """Centre of the monitor, relative to a window whose top-left is (origin_x, origin_y)."""
     return monitor.x - origin_x + monitor.w // 2, monitor.y - origin_y + monitor.h // 2

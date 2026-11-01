@@ -1749,6 +1749,11 @@ class App:
     def _keep_on_top(self):
         """Windows can leave an always-on-top window under an ordinary one (seen under Discord, 2026-10-13), so
         when another app's window is over the middle of the button, raise it again. A lock covers it on purpose."""
+        if self.lock is None and not getattr(self, "_moved", False):
+            # A monitor plugged in, unplugged or rearranged: put the button back on its own monitor (or the main
+            # one while that is gone) instead of leaving it stranded off-screen.
+            if self.monitor_layout(winapi.monitors()) != getattr(self, "_layout", None):
+                self.place_button()
         if self.lock is None:
             x, y = self.root.winfo_x() + self.width() // 2, self.root.winfo_y() + self.height() // 2
             if self.root.winfo_containing(x, y) is None:
@@ -1947,36 +1952,64 @@ class App:
         return w, px(self.H) + 2 * px(self.BORDER)
 
     def strip_spot(self, mons, w, h):
-        """Top-left of a w x h window where the strip goes: its dragged spot if that is still on a screen, else its
-        anchor corner on its monitor."""
+        """Top-left of a w x h window where the strip goes, and the monitor it lands on.
+
+        A dragged spot is kept as a monitor plus where on that monitor (button_rx/button_ry), not as desktop
+        coordinates, so rearranging monitors in Windows doesn't move it. When that monitor isn't connected it shows
+        at the same place on the main monitor, and the saved monitor is left alone, so plugging it back in returns
+        the button there. An anchored spot (Settings) is that corner of its monitor."""
         cfg = self.config
-        x, y = cfg.get("button_x"), cfg.get("button_y")
         anchor = cfg.get("button_anchor") or "bottom-right"
-        if anchor == "custom" and x is not None and y is not None and placement.on_screen(mons, x, y, w, h):
-            return placement.clamp(mons, x, y, w, h)
-        mon = placement.find(mons, cfg.get("button_monitor"))
-        return placement.anchor_position(mon, w, h, "bottom-right" if anchor == "custom" else anchor, margin=px(24))
+        home = placement.named(mons, cfg.get("button_monitor"))
+        if anchor == "custom":
+            rx, ry = cfg.get("button_rx"), cfg.get("button_ry")
+            x, y = cfg.get("button_x"), cfg.get("button_y")
+            if rx is None and x is not None and y is not None:  # saved before spots were per monitor
+                was = home if home and home.contains(x + w // 2, y + h // 2) else placement.under(mons, x, y, w, h)
+                if was:  # convert it once, while it still matches today's layout
+                    home, rx, ry = was, x - was.x, y - was.y
+                    cfg["button_monitor"], cfg["button_rx"], cfg["button_ry"] = was.name, rx, ry
+                    self.save_config()
+            if rx is not None and ry is not None:
+                mon = home or placement.find(mons, None)
+                return placement.fit(mon, mon.x + rx, mon.y + ry, w, h) + (mon,)
+        mon = home or placement.find(mons, None)
+        return placement.anchor_position(mon, w, h, "bottom-right" if anchor == "custom" else anchor,
+                                         margin=px(24)) + (mon,)
 
     def dot_spot(self, mons, w, h):
-        """Where the dot goes: where it was last dragged to, else the corner of the strip's own spot nearest the edge
-        of its monitor (an anchored strip puts the dot at that anchor), so it stays where you look for the button."""
-        cfg = self.config
-        x, y = cfg.get("dot_x"), cfg.get("dot_y")
-        if x is not None and y is not None and placement.on_screen(mons, x, y, w, h):
-            return placement.clamp(mons, x, y, w, h)
+        """The dot sits on the strip's corner nearest the edges of the strip's monitor, so minimizing leaves it right
+        where you were looking, on the same monitor. It has no spot of its own: dragging the dot moves the strip."""
         sw, sh = self.strip_size()
-        sx, sy = self.strip_spot(mons, sw, sh)
-        mon = next((m for m in mons if m.contains(sx + sw // 2, sy + sh // 2)), placement.find(mons, None))
-        x = sx + sw - w if sx + sw // 2 > mon.x + mon.w // 2 else sx
-        y = sy + sh - h if sy + sh // 2 > mon.y + mon.h // 2 else sy
-        return x, y
+        sx, sy, mon = self.strip_spot(mons, sw, sh)
+        return placement.corner_spot(mon, sx, sy, sw, sh, w, h) + (mon,)
+
+    def remember_spot(self, x, y):
+        """Save where the window was just dropped. A dropped dot saves the strip spot that puts the dot there."""
+        mons = winapi.monitors()
+        w, h = self.width(), self.height()
+        mon = placement.under(mons, x, y, w, h)
+        if mon is None:
+            return  # dropped off every screen: put it back where it was
+        if self.minimized:
+            sw, sh = self.strip_size()
+            x, y = placement.corner_spot(mon, x, y, w, h, sw, sh)
+        cfg = self.config
+        cfg["button_anchor"], cfg["button_monitor"] = "custom", mon.name
+        cfg["button_rx"], cfg["button_ry"] = x - mon.x, y - mon.y
+        cfg["button_x"], cfg["button_y"] = x, y
 
     def place_button(self):
         """Put the window where the config says, falling back to the main monitor if that spot is gone."""
         w, h = self.width(), self.height()
         mons = winapi.monitors()
-        x, y = (self.dot_spot if self.minimized else self.strip_spot)(mons, w, h)
+        x, y, _ = (self.dot_spot if self.minimized else self.strip_spot)(mons, w, h)
         self.root.geometry(placement.geometry(x, y, w, h))
+        self._layout = self.monitor_layout(mons)
+
+    @staticmethod
+    def monitor_layout(mons):
+        return tuple(sorted((m.name, m.x, m.y, m.w, m.h) for m in mons))
 
     def move_button(self, monitor_name=None, anchor=None):
         if monitor_name is not None:
@@ -1985,7 +2018,6 @@ class App:
             self.config["button_anchor"] = anchor
         elif self.config.get("button_anchor") == "custom":
             self.config["button_anchor"] = "bottom-right"  # a new monitor needs a spot on it
-        self.config["dot_x"] = self.config["dot_y"] = None  # the dot follows the strip to its new place
         self.place_button()
         self.save_config()
 
@@ -2041,16 +2073,10 @@ class App:
 
     def _release(self, e, action=None):
         if self._moved:
-            x, y = self.root.winfo_x(), self.root.winfo_y()
-            cfg = self.config
-            if self.minimized:  # the dot keeps its own spot; the strip's is untouched for when it comes back
-                cfg["dot_x"], cfg["dot_y"] = x, y
-            else:
-                cfg["button_x"], cfg["button_y"], cfg["button_anchor"] = x, y, "custom"
-                here = [m for m in winapi.monitors() if m.contains(x + self.width() // 2, y + self.height() // 2)]
-                if here:
-                    cfg["button_monitor"] = here[0].name
+            self._moved = False
+            self.remember_spot(self.root.winfo_x(), self.root.winfo_y())
             self.save_config()
+            self.place_button()  # snaps fully onto the monitor it was dropped on
         else:
             (action or self.trigger)()
 

@@ -50,8 +50,8 @@ DEFAULT_CONFIG = {
     "escalate": True,            # longer locks when urges come close together
     "bored_ideas": [],           # your own lines for the Bored button; blank = the BORED_IDEAS defaults
     "minimized": False,          # the strip is folded down to one small dot
-    "dot_x": None,               # where the dot was last dragged to; None = beside the strip's own spot
-    "dot_y": None,
+    "button_rx": None,           # a dragged spot: where on button_monitor (None = not dragged yet)
+    "button_ry": None,
 }
 
 HEADS_UP_MINUTES = 10
