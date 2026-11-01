@@ -1547,6 +1547,12 @@ class App:
         gear.bind("<Button-1>", lambda e: self.open_settings())
         gear.bind("<Enter>", lambda e: gear.config(fg="#C9CCFF"))
         gear.bind("<Leave>", lambda e: gear.config(fg=TEXT))
+        # Minimize in the other corner: the strip becomes the dot; clicking the dot brings it back.
+        mini = tk.Label(self.face, text="–", font=(FONT, 11, "bold"), fg=TEXT, bg=ACCENT, cursor="hand2")
+        mini.place(x=px(5), y=-px(2), anchor="nw")
+        mini.bind("<Button-1>", lambda e: (self.minimize(), "break")[1])
+        mini.bind("<Enter>", lambda e: mini.config(fg="#C9CCFF"))
+        mini.bind("<Leave>", lambda e: mini.config(fg=TEXT))
 
         menu = self.menu = tk.Menu(root, tearoff=0)
         menu.add_command(label="Progress", command=self.show_progress)
