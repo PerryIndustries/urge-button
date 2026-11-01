@@ -1429,12 +1429,12 @@ class SettingsWindow:
 
 
 class App:
-    W, H = 196, 78     # the URGE button
-    BW, GAP = 76, 4    # the smaller Bored button beside it, and the seam between the two
-    FW = 76            # the Food timer button after Bored
-    AW = 76            # the Alarm button after Food (only when ~/Alarm is installed)
-    NW = 76            # the Notes button (only when the voicenotes pipeline is installed)
-    SW = 76            # the Screen button last: turns the monitors off
+    W, H = 104, 40     # the URGE button
+    BW, GAP = 52, 3    # the smaller Bored button beside it, and the seam between the two
+    FW = 52            # the Food timer button after Bored
+    AW = 52            # the Alarm button after Food (only when ~/Alarm is installed)
+    NW = 52            # the Notes button (only when the voicenotes pipeline is installed)
+    SW = 52            # the Screen button last: turns the monitors off
     BORDER = 2         # the bright outline that makes it findable on a dark screen
     DOT = 18           # the whole window when minimized: one round dot
     CLEAR = "#010203"  # the dot window's see-through colour (Windows -transparentcolor), so only the dot shows
@@ -1470,23 +1470,23 @@ class App:
         self.face = tk.Frame(strip, bg=ACCENT, cursor="hand2", width=px(self.W), height=px(self.H))
         self.face.pack(side="left", fill="y")
         self.face.pack_propagate(False)
-        self.title = tk.Label(self.face, text="URGE", font=(FONT, 18, "bold"), fg=TEXT, bg=ACCENT)
-        self.sub = tk.Label(self.face, text="", font=(FONT, 9), fg=TEXT, bg=ACCENT)
-        self.title.pack(pady=(px(8), 0))
+        self.title = tk.Label(self.face, text="URGE", font=(FONT, 11, "bold"), fg=TEXT, bg=ACCENT)
+        self.sub = tk.Label(self.face, text="", font=(FONT, 7), fg=TEXT, bg=ACCENT)
+        self.title.pack(pady=(px(3), 0))
         self.sub.pack()
         self.bored_face = tk.Frame(strip, bg=CALM, cursor="hand2", width=px(self.BW), height=px(self.H))
         self.bored_face.pack(side="left", fill="y", padx=(px(self.GAP), 0))
         self.bored_face.pack_propagate(False)
-        self.bored_title = tk.Label(self.bored_face, text="Bored", font=(FONT, 11, "bold"), fg=TEXT, bg=CALM)
-        self.bored_sub = tk.Label(self.bored_face, text="", font=(FONT, 8), fg=TEXT, bg=CALM)
-        self.bored_title.pack(pady=(px(14), 0))
+        self.bored_title = tk.Label(self.bored_face, text="Bored", font=(FONT, 9, "bold"), fg=TEXT, bg=CALM)
+        self.bored_sub = tk.Label(self.bored_face, text="", font=(FONT, 7), fg=TEXT, bg=CALM)
+        self.bored_title.pack(pady=(px(4), 0))
         self.bored_sub.pack()
         self.food_face = tk.Frame(strip, bg=WARN, cursor="hand2", width=px(self.FW), height=px(self.H))
         self.food_face.pack(side="left", fill="y", padx=(px(self.GAP), 0))
         self.food_face.pack_propagate(False)
-        self.food_title = tk.Label(self.food_face, text="Food", font=(FONT, 11, "bold"), fg=BG, bg=WARN)
-        self.food_sub = tk.Label(self.food_face, text="", font=(FONT, 8), fg=BG, bg=WARN)
-        self.food_title.pack(pady=(px(14), 0))
+        self.food_title = tk.Label(self.food_face, text="Food", font=(FONT, 9, "bold"), fg=BG, bg=WARN)
+        self.food_sub = tk.Label(self.food_face, text="", font=(FONT, 7), fg=BG, bg=WARN)
+        self.food_title.pack(pady=(px(4), 0))
         self.food_sub.pack()
         food_widgets = (self.food_face, self.food_title, self.food_sub)
         for wdg in food_widgets:
@@ -1499,9 +1499,9 @@ class App:
             self.alarm_face = tk.Frame(strip, bg=ACCENT_SOFT, cursor="hand2", width=px(self.AW), height=px(self.H))
             self.alarm_face.pack(side="left", fill="y", padx=(px(self.GAP), 0))
             self.alarm_face.pack_propagate(False)
-            self.alarm_title = tk.Label(self.alarm_face, text="Alarm", font=(FONT, 11, "bold"), fg=TEXT, bg=ACCENT_SOFT)
-            self.alarm_sub = tk.Label(self.alarm_face, text="", font=(FONT, 8), fg=TEXT, bg=ACCENT_SOFT)
-            self.alarm_title.pack(pady=(px(14), 0))
+            self.alarm_title = tk.Label(self.alarm_face, text="Alarm", font=(FONT, 9, "bold"), fg=TEXT, bg=ACCENT_SOFT)
+            self.alarm_sub = tk.Label(self.alarm_face, text="", font=(FONT, 7), fg=TEXT, bg=ACCENT_SOFT)
+            self.alarm_title.pack(pady=(px(4), 0))
             self.alarm_sub.pack()
             alarm_widgets = (self.alarm_face, self.alarm_title, self.alarm_sub)
             for wdg in alarm_widgets:
@@ -1512,9 +1512,9 @@ class App:
             self.notes_face = tk.Frame(strip, bg=GOOD, cursor="hand2", width=px(self.NW), height=px(self.H))
             self.notes_face.pack(side="left", fill="y", padx=(px(self.GAP), 0))
             self.notes_face.pack_propagate(False)
-            self.notes_title = tk.Label(self.notes_face, text="Notes", font=(FONT, 11, "bold"), fg=BG, bg=GOOD)
-            self.notes_sub = tk.Label(self.notes_face, text="form now", font=(FONT, 8), fg=BG, bg=GOOD)
-            self.notes_title.pack(pady=(px(14), 0))
+            self.notes_title = tk.Label(self.notes_face, text="Notes", font=(FONT, 9, "bold"), fg=BG, bg=GOOD)
+            self.notes_sub = tk.Label(self.notes_face, text="form now", font=(FONT, 7), fg=BG, bg=GOOD)
+            self.notes_title.pack(pady=(px(4), 0))
             self.notes_sub.pack()
             notes_widgets = (self.notes_face, self.notes_title, self.notes_sub)
             for wdg in notes_widgets:
@@ -1523,9 +1523,9 @@ class App:
         self.screen_face = tk.Frame(strip, bg=PANEL_HI, cursor="hand2", width=px(self.SW), height=px(self.H))
         self.screen_face.pack(side="left", fill="y", padx=(px(self.GAP), 0))
         self.screen_face.pack_propagate(False)
-        self.screen_title = tk.Label(self.screen_face, text="Screen", font=(FONT, 11, "bold"), fg=TEXT, bg=PANEL_HI)
-        self.screen_sub = tk.Label(self.screen_face, text="off", font=(FONT, 8), fg=TEXT, bg=PANEL_HI)
-        self.screen_title.pack(pady=(px(14), 0))
+        self.screen_title = tk.Label(self.screen_face, text="Screen", font=(FONT, 9, "bold"), fg=TEXT, bg=PANEL_HI)
+        self.screen_sub = tk.Label(self.screen_face, text="off", font=(FONT, 7), fg=TEXT, bg=PANEL_HI)
+        self.screen_title.pack(pady=(px(4), 0))
         self.screen_sub.pack()
         screen_widgets = (self.screen_face, self.screen_title, self.screen_sub)
         for wdg in screen_widgets:
