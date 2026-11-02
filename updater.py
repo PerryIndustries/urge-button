@@ -1,6 +1,6 @@
 """Keep the PC app up to date from GitHub, the way Rift Pen does with electron-updater.
 
-Checks on start and every 30 minutes. When origin/main has moved on, it fast-forwards the local
+Checks on start and every 3 hours. When origin/main has moved on, it fast-forwards the local
 checkout in the background (only on `main`, only with no local edits, only a fast-forward). The new
 code then runs as soon as it's safe to restart - nothing on screen and the computer left alone for a
 couple of minutes - or straight away from "Restart to update", or at the next start.
@@ -9,7 +9,7 @@ couple of minutes - or straight away from "Restart to update", or at the next st
 import subprocess
 from pathlib import Path
 
-CHECK_SECONDS = 30 * 60
+CHECK_SECONDS = 3 * 60 * 60
 RESTART_POLL_SECONDS = 30
 MIN_IDLE_SECONDS = 120
 NO_WINDOW = 0x08000000

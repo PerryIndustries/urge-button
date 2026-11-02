@@ -59,8 +59,8 @@ def test_skips_other_branches(tmp_path):
     assert u.check() is None and "experiment" in u.status
 
 
-def test_checks_every_half_hour():
-    assert CHECK_SECONDS == 30 * 60
+def test_checks_every_three_hours():
+    assert CHECK_SECONDS == 3 * 60 * 60
 
 
 def test_auto_restart_waits_for_a_quiet_moment():

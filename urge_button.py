@@ -59,6 +59,8 @@ from urge_log import (
     finish_line, format_gap, heads_up_due, hour_name, load_config, pick_ideas, save_json, stretch_at, to_spotify_uri,
 )
 
+SYNC_EVERY_MS = 15 * 60_000  # pull the phone's entries; your own go out within seconds of a change
+
 FRIEND_PROMPTS = [
     "hey, been thinking about you - how's your week going?",
     "random q: what's the best thing that happened to you this week?",
@@ -502,6 +504,7 @@ class LockScreen:
 
 def small_window(app, title):
     w = tk.Toplevel(app.root, bg=BG, padx=px(20), pady=px(16))
+    w.transient(app.root)  # owned by the button, so no Python tab on the taskbar
     w.title(title)
     w.attributes("-topmost", True)
     w.resizable(False, False)
@@ -1611,11 +1614,18 @@ class App:
         self.hotkey_ok = registered.get("urge", False)
         self.bored_hotkey_ok = registered.get("bored", False)
 
+        # An icon behind the ^ arrow in the bottom-right corner; clicking it opens the button's menu. Nothing of the
+        # app sits on the taskbar: the button is a tool window and every other window is owned by it.
+        self.tray = winapi.TrayIcon("Urge Button", (0x6A, 0x75, 0xF7)) if hotkey else None  # previews add no icon
+        if self.tray:
+            self.tray.start()
+            root.bind("<Destroy>", lambda e: e.widget is root and self.tray.stop(), add="+")
+
         # Closing chosen apps during a lock and the cooldown after it
         self.app_blocker = AppBlocker()
         self._block_loop()
 
-        # Self-update from GitHub (like Rift Pen): check on start and every 30 minutes, restart when it's quiet
+        # Self-update from GitHub (like Rift Pen): check on start and every 3 hours, restart when it's quiet
         self.updater = Updater(Path(__file__).resolve().parent)
         self._update_results = queue.Queue()
         self._restart_watch = False
@@ -1773,7 +1783,7 @@ class App:
 
     def _sync_every(self):
         self.schedule_sync(0)
-        self.root.after(5 * 60_000, self._sync_every)
+        self.root.after(SYNC_EVERY_MS, self._sync_every)
 
     def schedule_sync(self, delay=3000):
         if not self.online or not self.config.get("sync", True):
@@ -1838,7 +1848,16 @@ class App:
             self._sync_done(*self._sync_results.get_nowait())
         while not self._update_results.empty():
             self._update_done(self._update_results.get_nowait())
-        self.root.after(150, self._poll_hotkey)
+        while self.tray and not self.tray.clicks.empty():
+            self.tray.clicks.get_nowait()
+            self.tray_menu()
+        self.root.after(250, self._poll_hotkey)
+
+    def tray_menu(self):
+        """The button's own menu, opened at the mouse from the tray icon."""
+        x, y = self.root.winfo_pointerxy()
+        self.root.focus_force()  # so a click anywhere else closes the menu
+        self.menu.tk_popup(x, y)
 
     def _tick_counts(self):
         self.refresh_counts()

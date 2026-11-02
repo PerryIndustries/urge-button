@@ -28,7 +28,9 @@ python urge_button.py --install
 
 **Emergency exit:** a quiet `Emergency exit` sits in the bottom-right corner of the lock screen (on the monitor the message is on) and at the foot of the Bored panel. Press and hold it for three seconds: it counts down (`Hold... 3`, `2`, `1`) over a filling bar, and letting go early resets it. On the lock it ends the lock right there, exactly like Unlock, and the urge carries `emergency_exit` in your history (it syncs to the phone like every other field, and older copies of the app ignore it). On the Bored panel it closes the panel at once, a running activity counting as stopped. Once the lock's timer has finished it is gone, since Unlock is there.
 
-**Updates:** the app keeps itself up to date from this repo (on start and every 30 minutes, like Rift Pen). New versions download in the background and install themselves the first time nothing is open (no lock, no Sudoku, Settings or Progress window) and the keyboard and mouse have been quiet for two minutes - or right away from "Restart to update" in the right-click menu, or at the next start. It only updates a clean checkout of `main`, so local edits are never overwritten.
+**Tray icon:** the app never shows on the taskbar. Its icon (a blue dot) sits behind the ^ arrow in the bottom-right corner; click it for the same menu as right-clicking the button. Drag it out next to the clock if you want it always visible.
+
+**Updates:** the app keeps itself up to date from this repo (on start and every 3 hours, like Rift Pen). New versions download in the background and install themselves the first time nothing is open (no lock, no Sudoku, Settings or Progress window) and the keyboard and mouse have been quiet for two minutes - or right away from "Restart to update" in the right-click menu, or at the next start. It only updates a clean checkout of `main`, so local edits are never overwritten.
 
 Your history and settings live in `%APPDATA%\UrgeButton\` (`events.json`, `sudoku.json`, `config.json`), not in the repo. To bring your history to another computer, copy that folder across.
 

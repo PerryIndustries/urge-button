@@ -230,6 +230,7 @@ class ProgressWindow:
     def __init__(self, root, log):
         self.log = log
         self.win = tk.Toplevel(root, bg=BG, padx=px(20), pady=px(16))
+        self.win.transient(root)  # owned by the button, so no Python tab on the taskbar
         self.win.title("Urge Button - Progress")
         self.win.resizable(False, False)
         self.render()

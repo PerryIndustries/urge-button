@@ -100,6 +100,11 @@ class SyncError(Exception):
     pass
 
 
+# url -> (ETag, body) of the last good read, so an unchanged file comes back as an empty 304 instead of the whole
+# document (a 304 also doesn't count against GitHub's rate limit).
+_CACHE = {}
+
+
 class GitHubFile:
     def __init__(self, repo, token, path=PATH):
         self.url = f"https://api.github.com/repos/{repo}/contents/{path}"
@@ -111,10 +116,21 @@ class GitHubFile:
         req.add_header("Authorization", f"Bearer {self.token}")
         req.add_header("Accept", "application/vnd.github+json")
         req.add_header("User-Agent", "urge-button")
+        cached = _CACHE.get(self.url) if method == "GET" else None
+        if cached:
+            req.add_header("If-None-Match", cached[0])
         try:
             with urllib.request.urlopen(req, timeout=20, context=self.ctx) as r:
-                return r.status, json.loads(r.read() or b"{}")
+                data = json.loads(r.read() or b"{}")
+                etag = r.headers.get("ETag")
+                if method == "GET" and r.status == 200 and etag:
+                    _CACHE[self.url] = (etag, data)
+                elif method != "GET":
+                    _CACHE.pop(self.url, None)  # we just changed it; the next read fetches it fresh
+                return r.status, data
         except urllib.error.HTTPError as e:
+            if e.code == 304 and cached:
+                return 200, cached[1]  # unchanged since the last read
             return e.code, {}
         except (urllib.error.URLError, OSError, ValueError) as e:
             raise SyncError(f"can't reach GitHub ({e})") from e

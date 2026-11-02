@@ -442,6 +442,7 @@ class SudokuWindow:
     def __init__(self, app):
         self.app = app
         w = self.win = tk.Toplevel(app.root, bg=BG, padx=px(20), pady=px(16))
+        w.transient(app.root)  # owned by the button, so no Python tab on the taskbar
         w.title("Urge Button - Sudoku")
         w.resizable(False, False)
         head = tk.Frame(w, bg=BG)
